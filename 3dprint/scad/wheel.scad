@@ -1,0 +1,41 @@
+$fn=120;
+difference(){
+cylinder(d=48,h=38);
+translate([0,0,-1])cylinder(d=46,h=40);
+}
+difference(){
+union()
+{
+for(i=[0:60:300])
+{
+    rotate([0,0,i])translate([3,-0.75,0])
+    cube(size=[20,1.5,15]);
+} 
+cylinder(d=16,h=22);
+}
+translate([0,0,-1])cylinder(d=3,h=24);
+}
+rotate([0,0,30])translate([1,-2,0])
+cube(size=[2,4,22]);
+h=38/8;
+d_ext=51.5;
+giro=[0,0,-6,6,0,-6,6,0];
+helice=[0,6,-12,6,6,-12,6,0];
+
+difference(){
+union(){
+for (i=[0:15:105])
+{
+rotate([0,0,i])
+for (j=[0:1:7])
+{
+translate([0,0,h*j])
+rotate([0,0,giro[j]])
+linear_extrude(height=h,twist=helice[j])
+circle(d=d_ext,$fn=3);
+}
+}
+cylinder(d=49,h=38);
+}
+translate([0,0,-1])cylinder(d=47,h=40);
+}
