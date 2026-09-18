@@ -10,7 +10,7 @@
 
   const state = {
     lx: 0, ly: 0,
-    base_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, gripper_rotate_dir: 0,
+    base_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, // wrist_dir = angulo de acercamiento (phi) desde el rediseno 18-sept
     grip: 0, deposit: 0,
     preset_save: null, preset_goto: null, preset_delete: null,
     speed: 1,
@@ -26,9 +26,21 @@
     return v * v * v; // cubica: preserva signo, suave cerca del centro
   }
 
+  // --- Feedback haptico (18-sept) ------------------------------------------
+  // navigator.vibrate no existe en iOS Safari - se degrada a no-hacer-nada
+  // en vez de romper, no hay forma de dar vibracion real ahi.
+  function vibrate(pattern) {
+    try {
+      if (navigator.vibrate) navigator.vibrate(pattern);
+    } catch (e) {
+      // ignorar - sin vibracion en este navegador
+    }
+  }
+
   // --- WebSocket ----------------------------------------------------------
   let ws = null;
   let missionStart = null; // Date.now() de la primera conexion, para el reloj de mision
+  let lastHitLimit = false; // para vibrar solo en el flanco ascendente, no todo el rato
   const statusEl = document.getElementById("conn-status");
   const statusLabel = document.getElementById("conn-label");
 
@@ -46,6 +58,18 @@
       setTimeout(connect, 1000);
     };
     ws.onerror = () => ws.close();
+    ws.onmessage = (ev) => {
+      // Eco del servidor con el estado del brazo (ver main.py ws_control) -
+      // hoy solo trae hit_limit, para el feedback haptico al tocar un tope.
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      if (msg.hit_limit && !lastHitLimit) vibrate(35);
+      lastHitLimit = !!msg.hit_limit;
+    };
   }
   connect();
 
@@ -174,8 +198,8 @@
   });
 
   // --- Botones de accion (garra / deposito) --------------------
-  document.getElementById("btn-grip").addEventListener("click", () => { state.grip = 1; });
-  document.getElementById("btn-deposit").addEventListener("click", () => { state.deposit = 1; });
+  document.getElementById("btn-grip").addEventListener("click", () => { state.grip = 1; vibrate(25); });
+  document.getElementById("btn-deposit").addEventListener("click", () => { state.deposit = 1; vibrate([20, 30, 20]); });
 
   // --- Selector de velocidad ----------------------------------------------
   document.querySelectorAll("#speed-select button").forEach((btn) => {
@@ -223,8 +247,8 @@
 
   // Nombre corto a mostrar -> nombre que devuelve /servos (ver servos.py:get_all_angles)
   const ANGLE_LABELS = {
-    base: "BASE", hombro: "HOMBRO", codo: "CODO", muneca: "MUÑECA",
-    gripper_rotate: "GIRO GARRA", gripper: "GARRA",
+    base: "BASE", hombro: "HOMBRO", codo: "CODO", inclinacion_garra: "ÁNGULO GARRA",
+    gripper: "GARRA",
   };
 
   function escapeHtml(s) {

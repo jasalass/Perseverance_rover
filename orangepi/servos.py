@@ -153,8 +153,7 @@ class ServoController:
             config.CH_ARM_BASE: "base",
             config.CH_ARM_SHOULDER: "hombro",
             config.CH_ARM_ELBOW: "codo",
-            config.CH_ARM_WRIST: "muneca",
-            config.CH_GRIPPER_ROTATE: "gripper_rotate",
+            config.CH_ARM_WRIST: "inclinacion_garra",
             config.CH_GRIPPER: "gripper",
             config.CH_STEER_FL: "steer_fl",
             config.CH_STEER_FR: "steer_fr",
@@ -163,10 +162,10 @@ class ServoController:
         }
         return {name: self.get_angle(ch) for ch, name in names.items()}
 
-    # Canales del brazo (sin steering) - lo que graba/reproduce recorder.py.
+    # Canales del brazo (sin steering) - lo que graba/reproduce presets.py.
     ARM_CHANNELS = (
         config.CH_ARM_BASE, config.CH_ARM_SHOULDER, config.CH_ARM_ELBOW,
-        config.CH_ARM_WRIST, config.CH_GRIPPER_ROTATE, config.CH_GRIPPER,
+        config.CH_ARM_WRIST, config.CH_GRIPPER,
     )
 
     def snapshot_arm_angles(self) -> dict:
@@ -176,43 +175,53 @@ class ServoController:
 
     # --- API de alto nivel usada por main.py -------------------------------
 
-    def move_arm(self, base_dir: float, wrist_dir: float, gripper_rotate_dir: float = 0.0, step: float = config.ARM_STEP_DEG_PER_TICK):
-        """Todos los ejes reciben -1.0..1.0 (velocidad ya rampeada por
-        main.py:_arm_easing_loop, no el valor crudo del joystick/boton) -
-        movimiento suave, sin salto brusco. La base usa su propia
-        velocidad, mas lenta - ver config.BASE_STEP_DEG_PER_TICK.
+    def move_arm(self, base_dir: float):
+        """-1.0..1.0, velocidad ya rampeada por main.py:_arm_easing_loop,
+        no el valor crudo del joystick/boton - movimiento suave, sin salto
+        brusco.
 
-        Hombro y codo NO se mueven desde aca (16-sept): pasaron a control
-        por cinematica inversa por defecto (ver kinematics.py +
-        main.py:_arm_easing_loop). Para el modo libre/directo de hombro y
-        codo (switch IK/LIBRE del dashboard) ver move_arm_joint_direct()
-        mas abajo."""
+        Hombro, codo Y la inclinacion de garra (ex-muneca) NO se mueven
+        desde aca (18-sept): las 3 pasaron a control por cinematica
+        inversa acoplada por defecto (ver kinematics.solve3() +
+        main.py:_arm_easing_loop) - mover la inclinacion sola sin
+        recalcular hombro/codo haria que la punta de la garra se corra de
+        lugar en vez de solo rotar en el sitio (el brazo 2+3 fusionado ya
+        no tiene un eje de giro propio como antes, es un eslabon mas).
+        Para el modo libre/directo (switch IK/LIBRE del dashboard) ver
+        move_arm_joint_direct() mas abajo."""
         if base_dir:
             self.set_angle(config.CH_ARM_BASE, self.get_angle(config.CH_ARM_BASE) + base_dir * config.BASE_STEP_DEG_PER_TICK)
-        if wrist_dir:
-            new = self.get_angle(config.CH_ARM_WRIST) + wrist_dir * config.WRIST_STEP_DEG_PER_TICK
-            new = max(config.ANGLE_ARM_WRIST_MIN, min(config.ANGLE_ARM_WRIST_MAX, new))
-            self.set_angle(config.CH_ARM_WRIST, new)
-        if gripper_rotate_dir:
-            new = self.get_angle(config.CH_GRIPPER_ROTATE) + gripper_rotate_dir * step
-            new = max(config.ANGLE_GRIPPER_ROTATE_MIN, min(config.ANGLE_GRIPPER_ROTATE_MAX, new))
-            self.set_angle(config.CH_GRIPPER_ROTATE, new)
 
-    def move_arm_joint_direct(self, shoulder_dir: float, elbow_dir: float, step: float = config.ARM_STEP_DEG_PER_TICK):
-        """Modo 'LIBRE': hombro y codo se mueven cada uno por su cuenta,
-        como antes de pasar a control por IK - util para calibrar o para
-        posiciones que la IK no puede alcanzar (ver notas de config.py
-        sobre la zona muerta del anillo IK_L1_MM/IK_L2_MM). Se activa con
-        el switch IK/LIBRE del dashboard (ver main.py, _arm_mode)."""
+    def move_arm_joint_direct(self, shoulder_dir: float, elbow_dir: float, tilt_dir: float, step: float = config.ARM_STEP_DEG_PER_TICK) -> bool:
+        """Modo 'LIBRE': hombro, codo Y la inclinacion de garra se mueven
+        cada uno por su cuenta, sin coordinacion - util para calibrar o
+        para posiciones que la IK no puede alcanzar (ver notas de
+        config.py sobre la zona muerta del anillo IK_L1_MM/IK_L2_MM/
+        IK_L3_MM). Se activa con el switch IK/LIBRE del dashboard (ver
+        main.py, _arm_mode). Devuelve True si alguno de los tres quedo
+        pegado a su limite (para el feedback haptico - ver main.py,
+        _arm_hit_limit)."""
+        hit_limit = False
         if shoulder_dir:
             shoulder_step = step * (config.SHOULDER_DOWN_STEP_SCALE if shoulder_dir < 0 else 1.0)
             new = self.get_angle(config.CH_ARM_SHOULDER) + shoulder_dir * shoulder_step
-            new = max(config.ANGLE_ARM_SHOULDER_MIN, min(config.ANGLE_ARM_SHOULDER_MAX, new))
-            self.set_angle(config.CH_ARM_SHOULDER, new)
+            clamped = max(config.ANGLE_ARM_SHOULDER_MIN, min(config.ANGLE_ARM_SHOULDER_MAX, new))
+            if clamped != new:
+                hit_limit = True
+            self.set_angle(config.CH_ARM_SHOULDER, clamped)
         if elbow_dir:
             new = self.get_angle(config.CH_ARM_ELBOW) + elbow_dir * step
-            new = max(config.ANGLE_ARM_ELBOW_MIN, min(config.ANGLE_ARM_ELBOW_MAX, new))
-            self.set_angle(config.CH_ARM_ELBOW, new)
+            clamped = max(config.ANGLE_ARM_ELBOW_MIN, min(config.ANGLE_ARM_ELBOW_MAX, new))
+            if clamped != new:
+                hit_limit = True
+            self.set_angle(config.CH_ARM_ELBOW, clamped)
+        if tilt_dir:
+            new = self.get_angle(config.CH_ARM_WRIST) + tilt_dir * step
+            clamped = max(config.ANGLE_ARM_TILT_MIN, min(config.ANGLE_ARM_TILT_MAX, new))
+            if clamped != new:
+                hit_limit = True
+            self.set_angle(config.CH_ARM_WRIST, clamped)
+        return hit_limit
 
     def set_gripper(self, closed: bool):
         self._gripper_closed = closed

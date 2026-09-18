@@ -55,29 +55,33 @@ _failsafe_tripped = False
 # hacia la pedida en vez de saltar de golpe (ver _arm_easing_loop abajo y
 # config.ARM_MAX_ACCEL_PER_TICK). Sin esto, cada mensaje del joystick
 # aplicaba su velocidad instantaneamente -> se sentia brusco/a tirones.
-# Hombro/codo ya NO estan aca (16-sept) - pasaron a control por IK, ver
-# _ik_target_vel/_ik_current_vel/_ik_pos mas abajo.
-_arm_target = {"base_dir": 0.0, "wrist_dir": 0.0, "gripper_rotate_dir": 0.0}
+# Hombro/codo/inclinacion ya NO estan aca (18-sept) - pasaron a control
+# por IK acoplada, ver _ik_target_vel/_ik_current_vel/_ik_pos mas abajo.
+_arm_target = {"base_dir": 0.0}
 _arm_current = {k: 0.0 for k in _arm_target}
 
-# --- Control del brazo por cinematica inversa (16-sept) ---------------------
-# Cambio de paradigma: el joystick derecho ya no mueve hombro/codo como dos
-# articulaciones independientes - mueve la PUNTA DE LA GARRA en linea recta
-# (arriba/abajo, adelante/atras) y kinematics.solve() calcula que angulo de
-# hombro/codo hace falta para llegar ahi. Mismo patron velocidad+rampa que
-# el resto del brazo (ver _ik_target_vel/_ik_current_vel), pero integrando
-# una posicion cartesiana (_ik_pos) en vez de un angulo de servo.
-_ik_target_vel = {"x_dir": 0.0, "y_dir": 0.0}  # -1..1 pedido por el joystick
-_ik_current_vel = {"x_dir": 0.0, "y_dir": 0.0}  # -1..1 ya rampeado
+# --- Control del brazo por cinematica inversa (rediseño 18-sept) ------------
+# El joystick derecho mueve la POSICION (x,y) de la punta de la garra en
+# linea recta, y los botones que antes eran de la muneca mueven el ANGULO
+# DE ACERCAMIENTO (phi) - kinematics.solve3() calcula que angulo de
+# hombro/codo/inclinacion hace falta para cumplir las dos cosas a la vez
+# (brazo 2+3 fusionados, la inclinacion ya no gira sobre si misma, es un
+# eslabon mas - ver kinematics.py). Mismo patron velocidad+rampa que el
+# resto del brazo, integrando x/y/phi en vez de angulos de servo sueltos.
+_ik_target_vel = {"x_dir": 0.0, "y_dir": 0.0, "phi_dir": 0.0}  # -1..1 pedido
+_ik_current_vel = {k: 0.0 for k in _ik_target_vel}  # -1..1 ya rampeado
 
-# Posicion cartesiana objetivo (mm, origen en el eje del hombro). None =
-# "no inicializada todavia" - se sincroniza con la posicion REAL del brazo
-# (via kinematics.forward_from_servo) recien cuando hace falta, no con un
-# valor inventado. _ik_pos_dirty fuerza esa resincronizacion cada vez que
-# algo mueve hombro/codo por fuera de este loop (preset, macro de deposito,
-# failsafe) - si no, el control por IK seguiria de donde el software CREIA
-# que estaba, no de donde el brazo quedo de verdad.
+# Posicion cartesiana objetivo (mm, origen en el eje del hombro) y angulo
+# de acercamiento objetivo (grados, misma convencion que phi_deg en
+# solve3). Se sincronizan con la posicion REAL del brazo (via
+# kinematics.forward_from_servo/current_phi) recien cuando hace falta, no
+# con un valor inventado. _ik_pos_dirty fuerza esa resincronizacion cada
+# vez que algo mueve hombro/codo/inclinacion por fuera de este loop
+# (preset, macro de deposito, failsafe, debug endpoint) - si no, el
+# control por IK seguiria de donde el software CREIA que estaba, no de
+# donde el brazo quedo de verdad.
 _ik_pos = {"x": 0.0, "y": 0.0}
+_ik_phi = 0.0
 _ik_pos_dirty = True
 # Rama de la solucion IK (codo "arriba" o "abajo", ver kinematics.solve) -
 # se recalcula desde la pose real al resincronizar, para no saltar de rama
@@ -85,13 +89,21 @@ _ik_pos_dirty = True
 _ik_elbow_up = True
 
 # Switch IK/LIBRE del dashboard (16-sept): "ik" = joystick derecho mueve la
-# punta de la garra en linea recta (ver arriba). "joint" = joystick derecho
-# vuelve a mover hombro/codo cada uno por su cuenta, como antes del cambio
-# de paradigma - util para calibrar o alcanzar posiciones que la IK no
-# puede (la zona muerta del anillo, ver config.py). Mismos campos del
-# joystick (arm_x_dir/arm_y_dir) para los dos modos, el servidor decide
-# que significan segun _arm_mode - no hace falta un protocolo distinto.
+# punta de la garra en linea recta y los botones mueven phi (ver arriba).
+# "joint" = joystick derecho vuelve a mover hombro/codo cada uno por su
+# cuenta y los botones mueven la inclinacion directo, sin coordinacion -
+# util para calibrar o alcanzar posiciones que la IK no puede (la zona
+# muerta del anillo, ver config.py). Mismos campos del joystick/botones
+# para los dos modos, el servidor decide que significan segun _arm_mode -
+# no hace falta un protocolo distinto.
 _arm_mode = "ik"
+
+# Feedback haptico (18-sept): True mientras el brazo esta empujando contra
+# un limite (pared blanda de la IK, o tope de articulacion en modo LIBRE) -
+# se manda de vuelta al dashboard por WS para que vibre el celular. Flanco
+# ascendente nomas (el frontend vibra en el cambio False->True, no todo el
+# rato que se mantiene contra el limite).
+_arm_hit_limit = False
 
 
 def _apply_command(data: dict):
@@ -122,12 +134,14 @@ def _apply_command(data: dict):
 
     # El brazo no se mueve aca directo - solo se actualiza la velocidad
     # PEDIDA. _arm_easing_loop es el que de verdad llama a servos.move_arm
-    # (base/muneca/giro de garra) y kinematics.solve() (hombro/codo por IK).
+    # (base) y kinematics.solve3() (hombro/codo/inclinacion por IK) o
+    # servos.move_arm_joint_direct() (modo LIBRE). "wrist_dir" es el mismo
+    # campo del protocolo de siempre (los botones que eran de la muneca) -
+    # ahora alimenta phi_dir en vez de mover un canal directo.
     _arm_target["base_dir"] = float(data.get("base_dir", 0))
-    _arm_target["wrist_dir"] = float(data.get("wrist_dir", 0))
-    _arm_target["gripper_rotate_dir"] = float(data.get("gripper_rotate_dir", 0))
     _ik_target_vel["x_dir"] = float(data.get("arm_x_dir", 0.0))
     _ik_target_vel["y_dir"] = float(data.get("arm_y_dir", 0.0))
+    _ik_target_vel["phi_dir"] = float(data.get("wrist_dir", 0.0))
 
     if data.get("grip"):
         servos.toggle_gripper()
@@ -172,62 +186,62 @@ async def _arm_easing_loop():
     config.ARM_MAX_ACCEL_PER_TICK por tick, y recien ahi mueve el brazo de
     verdad - esto es lo que da la aceleracion/frenado suave en vez de saltar
     directo a la velocidad pedida por el joystick/boton."""
-    global _ik_pos_dirty, _ik_elbow_up
+    global _ik_pos_dirty, _ik_elbow_up, _arm_hit_limit, _ik_phi
     tick_s = 1.0 / config.ARM_EASING_HZ
     while True:
         await asyncio.sleep(tick_s)
         for axis, target in _arm_target.items():
             _arm_current[axis] = _ramp(_arm_current[axis], target, config.ARM_MAX_ACCEL_PER_TICK)
         if any(_arm_current.values()):
-            servos.move_arm(
-                base_dir=_arm_current["base_dir"],
-                wrist_dir=_arm_current["wrist_dir"],
-                gripper_rotate_dir=_arm_current["gripper_rotate_dir"],
-            )
+            servos.move_arm(base_dir=_arm_current["base_dir"])
 
         for axis, target in _ik_target_vel.items():
             _ik_current_vel[axis] = _ramp(_ik_current_vel[axis], target, config.ARM_MAX_ACCEL_PER_TICK)
 
         if _arm_mode == "joint":
-            # Modo LIBRE: mismos ejes del joystick derecho (x_dir/y_dir),
-            # pero interpretados como velocidad de CADA articulacion por
-            # separado - ver servos.move_arm_joint_direct. Vertical ->
-            # hombro, horizontal -> codo (igual mapeo que tenia el control
-            # viejo, antes del cambio a IK).
-            if _ik_current_vel["x_dir"] or _ik_current_vel["y_dir"]:
-                servos.move_arm_joint_direct(
+            # Modo LIBRE: mismos 3 ejes (x_dir/y_dir/phi_dir), pero
+            # interpretados como velocidad de CADA articulacion por
+            # separado (sin coordinar) - ver servos.move_arm_joint_direct.
+            # Vertical -> hombro, horizontal -> codo, botones -> inclinacion
+            # directo (igual mapeo que tenia el control viejo).
+            if any(_ik_current_vel.values()):
+                _arm_hit_limit = servos.move_arm_joint_direct(
                     shoulder_dir=_ik_current_vel["y_dir"],
                     elbow_dir=_ik_current_vel["x_dir"],
+                    tilt_dir=_ik_current_vel["phi_dir"],
                 )
+            else:
+                _arm_hit_limit = False
             continue
 
-        if _ik_current_vel["x_dir"] or _ik_current_vel["y_dir"]:
+        if any(_ik_current_vel.values()):
             if _ik_pos_dirty:
                 # Recortar ACA a los limites de seguridad de la IK antes de
-                # convertir a (x,y) - si el brazo quedo fuera de ese rango
-                # por algo que no lo respeta (un preset, ej. "traslado" a
-                # 180/0 con ANGLE_ARM_SHOULDER_MAX=175), arrancar desde el
-                # valor crudo real dejaria el punto de partida ya invalido,
-                # y la "pared blanda" de mas abajo lo revierte siempre
-                # contra si mismo -> el joystick queda trabado para
-                # siempre (bug 16-sept). Arrancando ya recortado, el primer
-                # movimiento puede "pegar el salto" final hasta el limite
-                # seguro, pero despues responde normal.
-                # Un margen chico (no justo al borde) para que el error de
+                # convertir a (x,y,phi) - si el brazo quedo fuera de ese
+                # rango por algo que no lo respeta (un preset, o modo
+                # LIBRE), arrancar desde el valor crudo real dejaria el
+                # punto de partida ya invalido, y el freeze de mas abajo lo
+                # revierte siempre contra si mismo -> el joystick queda
+                # trabado para siempre (bug 16-sept, ver ese fix original).
+                # Margen chico (no justo al borde) para que el error de
                 # punto flotante del viaje angulo->xy->angulo no vuelva a
-                # caer del otro lado del limite (ver bug 16-sept - clampear
-                # a EXACTO 10.0 podia volver como 9.999999999999986).
+                # caer del otro lado del limite.
                 current_shoulder_servo = max(config.ANGLE_ARM_SHOULDER_MIN + 0.5, min(
                     config.ANGLE_ARM_SHOULDER_MAX - 0.5, servos.get_angle(config.CH_ARM_SHOULDER)))
                 current_elbow_servo = max(config.ANGLE_ARM_ELBOW_MIN + 0.5, min(
                     config.ANGLE_ARM_ELBOW_MAX - 0.5, servos.get_angle(config.CH_ARM_ELBOW)))
-                _ik_pos["x"], _ik_pos["y"] = kinematics.forward_from_servo(current_shoulder_servo, current_elbow_servo)
+                current_tilt_servo = max(config.ANGLE_ARM_TILT_MIN + 0.5, min(
+                    config.ANGLE_ARM_TILT_MAX - 0.5, servos.get_angle(config.CH_ARM_WRIST)))
+                wrist_x, wrist_y = kinematics.forward_from_servo(current_shoulder_servo, current_elbow_servo)
                 _ik_elbow_up = kinematics.infer_elbow_up(current_elbow_servo)
+                _ik_phi = kinematics.current_phi(current_shoulder_servo, current_elbow_servo, current_tilt_servo)
+                phi_rad = math.radians(_ik_phi)
+                _ik_pos["x"] = wrist_x + config.IK_L3_MM * math.cos(phi_rad)
+                _ik_pos["y"] = wrist_y + config.IK_L3_MM * math.sin(phi_rad)
                 _ik_pos_dirty = False
 
-            prev_x, prev_y = _ik_pos["x"], _ik_pos["y"]
+            prev_x, prev_y, prev_phi = _ik_pos["x"], _ik_pos["y"], _ik_phi
 
-            y_dir = _ik_current_vel["y_dir"]
             # SHOULDER_DOWN_STEP_SCALE (0.12) YA NO se aplica aca (16-sept):
             # era para el control viejo por articulacion, donde el hombro
             # solo podia acelerar de golpe por gravedad entre un paso grande
@@ -239,27 +253,10 @@ async def _arm_easing_loop():
             # verdad, se puede reintroducir un factor mas suave (ej. 0.6-0.8)
             # en vez del 0.12 original.
             _ik_pos["x"] += _ik_current_vel["x_dir"] * config.IK_CARTESIAN_SPEED_MM_S * tick_s
-            _ik_pos["y"] += y_dir * config.IK_CARTESIAN_SPEED_MM_S * tick_s
+            _ik_pos["y"] += _ik_current_vel["y_dir"] * config.IK_CARTESIAN_SPEED_MM_S * tick_s
+            _ik_phi += _ik_current_vel["phi_dir"] * config.IK_PHI_SPEED_DEG_S * tick_s
 
-            # "Pared blanda" #1: si el objetivo se va mas lejos o mas cerca
-            # del hombro de lo que el largo de los eslabones permite, se
-            # proyecta de vuelta al borde alcanzable.
-            l1, l2 = config.IK_L1_MM, config.IK_L2_MM
-            d = math.hypot(_ik_pos["x"], _ik_pos["y"])
-            d_min, d_max = abs(l1 - l2) + 1.0, l1 + l2 - 1.0
-            if d > d_max:
-                scale = d_max / d
-                _ik_pos["x"] *= scale
-                _ik_pos["y"] *= scale
-            elif d < d_min:
-                scale = d_min / d if d > 1e-6 else 0.0
-                if scale:
-                    _ik_pos["x"] *= scale
-                    _ik_pos["y"] *= scale
-                else:
-                    _ik_pos["x"], _ik_pos["y"] = d_min, 0.0
-
-            result = kinematics.solve(_ik_pos["x"], _ik_pos["y"], elbow_up=_ik_elbow_up)
+            result = kinematics.solve3(_ik_pos["x"], _ik_pos["y"], _ik_phi, elbow_up=_ik_elbow_up)
             # +-0.01 de margen: el viaje angulo->xy->angulo no siempre
             # vuelve exacto (error de punto flotante), sin esto un punto
             # justo en el limite podia rechazarse por una diferencia de
@@ -267,21 +264,27 @@ async def _arm_easing_loop():
             eps = 0.01
             shoulder_ok = (config.ANGLE_ARM_SHOULDER_MIN - eps) <= result.shoulder_angle_raw <= (config.ANGLE_ARM_SHOULDER_MAX + eps)
             elbow_ok = (config.ANGLE_ARM_ELBOW_MIN - eps) <= result.elbow_angle_raw <= (config.ANGLE_ARM_ELBOW_MAX + eps)
-            if shoulder_ok and elbow_ok:
+            tilt_ok = (config.ANGLE_ARM_TILT_MIN - eps) <= result.tilt_angle_raw <= (config.ANGLE_ARM_TILT_MAX + eps)
+            if result.reachable and shoulder_ok and elbow_ok and tilt_ok:
                 servos.set_angle(config.CH_ARM_SHOULDER, result.shoulder_angle)
                 servos.set_angle(config.CH_ARM_ELBOW, result.elbow_angle)
+                servos.set_angle(config.CH_ARM_WRIST, result.tilt_angle)
+                _arm_hit_limit = False
             else:
-                # "Pared blanda" #2: el punto esta dentro del anillo por
-                # distancia, pero el angulo de servo que hace falta para
-                # llegar ahi NO entra en el rango real (ver nota 16-sept:
-                # cerca del piso el codo pedia un angulo imposible). Si se
-                # dejara clampear el angulo de salida nomas, el objetivo
-                # interno (_ik_pos) seguiria alejandose de lo que el servo
+                # "Pared blanda": el punto/angulo pedido no se puede
+                # cumplir de verdad (fuera de alcance, o algun angulo de
+                # servo necesario cae fuera de su rango real - ver nota
+                # 16-sept del bug original con el codo). Si se dejara
+                # clampear el angulo de salida nomas, el objetivo interno
+                # (_ik_pos/_ik_phi) seguiria alejandose de lo que el servo
                 # puede cumplir de verdad, y el brazo "saltaba" al volver a
                 # tocar el joystick. Se congela el objetivo en el ultimo
                 # punto que si se pudo en vez de eso - no se manda nada
                 # nuevo, el brazo se queda quieto ahi.
-                _ik_pos["x"], _ik_pos["y"] = prev_x, prev_y
+                _ik_pos["x"], _ik_pos["y"], _ik_phi = prev_x, prev_y, prev_phi
+                _arm_hit_limit = True
+        else:
+            _arm_hit_limit = False
 
 
 async def _failsafe_watchdog():
@@ -328,6 +331,11 @@ async def ws_control(websocket: WebSocket):
             except json.JSONDecodeError:
                 continue
             _apply_command(data)
+            # Eco liviano de vuelta (18-sept) - el dashboard lo usa para el
+            # feedback haptico (vibrar al tocar un limite del brazo). El WS
+            # ya estaba abierto y el cliente ya manda 20 msj/seg, asi que
+            # no hace falta polling nuevo para esto.
+            await websocket.send_text(json.dumps({"hit_limit": _arm_hit_limit}))
     except WebSocketDisconnect:
         log.info("Cliente desconectado")
 
@@ -373,7 +381,7 @@ async def debug_set_angle(channel: int, angle: float):
     - mueve un canal puntual sin pasar por el protocolo normal del
     dashboard. Sin autenticacion - no exponer fuera de la red local."""
     servos.set_angle(channel, angle)
-    if channel in (config.CH_ARM_SHOULDER, config.CH_ARM_ELBOW):
+    if channel in (config.CH_ARM_SHOULDER, config.CH_ARM_ELBOW, config.CH_ARM_WRIST):
         _mark_ik_dirty()  # si no, el IK sigue el objetivo cartesiano viejo
     return {"channel": channel, "angle": servos.get_angle(channel)}
 

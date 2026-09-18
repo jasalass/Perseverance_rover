@@ -27,16 +27,16 @@ PCA9685_ADDRESS = 0x40
 # ---------------------------------------------------------------------------
 # Servos (PCA9685, 16 canales, se usan 10)
 # ---------------------------------------------------------------------------
-# Brazo HowToMechatronics de 6 servos (corregido 15-sept, ver CLAUDE.md -
-# se habia contado mal, faltaba el giro de la garra como eje propio):
-#   girar base + hombro + codo en MG996R, muneca + girador de garra +
-#   apertura de garra en MG90.
+# Brazo de 5 servos (rediseño 18-sept: brazo 2+3 fusionados en una sola
+# pieza, la ex-muneca ya no gira sobre si misma - ahora INCLINA la garra
+# como un eslabon mas del brazo, en el mismo plano que hombro/codo. El
+# giro de garra que tenia el canal 4 desaparece del diseno - ese canal
+# queda sin usar. Ver kinematics.solve3() para la IK de las 3 juntas.
 CH_ARM_BASE = 0            # MG996R - girar brazo (base)
 CH_ARM_SHOULDER = 1        # MG996R - hombro (subir/bajar brazo)
 CH_ARM_ELBOW = 2           # MG996R - codo (extender/recoger alcance)
-CH_ARM_WRIST = 3           # MG90 - muneca
-CH_GRIPPER_ROTATE = 4      # MG90 - gira la garra sobre si misma
-CH_GRIPPER = 5             # MG90 - abre/cierra la garra (pendiente de conectar)
+CH_ARM_WRIST = 3           # MG996R (ex-muneca/MG90) - inclinacion de garra, ahora parte del plano del brazo
+CH_GRIPPER = 5             # MG90S - abre/cierra la garra
 
 CH_STEER_FL = 6      # SG90 - direccion rueda delantera izquierda
 CH_STEER_FR = 7      # SG90 - direccion rueda delantera derecha
@@ -63,12 +63,12 @@ ANGLE_ARM_SHOULDER_MAX = 175  # tope real probado 180 (pose "traslado") - se dej
 ANGLE_ARM_ELBOW_REST = 90
 ANGLE_ARM_ELBOW_MIN = 10
 ANGLE_ARM_ELBOW_MAX = 170
-ANGLE_ARM_WRIST_CENTER = 176  # calibrado 16-sept: horn reubicado a mano para que quede paralela al piso aca
-ANGLE_ARM_WRIST_MIN = 10   # sin calibrar el limite mecanico real todavia - margen generico
-ANGLE_ARM_WRIST_MAX = 176  # tope real pedido 16-sept: no pasar del angulo paralelo al piso
-ANGLE_GRIPPER_ROTATE_CENTER = 100  # calibrado 16-sept con la garra real
-ANGLE_GRIPPER_ROTATE_MIN = 10   # idem wrist - sin calibrar el limite mecanico real todavia
-ANGLE_GRIPPER_ROTATE_MAX = 170
+# Inclinacion de garra (ex-muneca, canal 3) - valores de la calibracion
+# vieja (MG90S, horn en otra posicion) YA NO APLICAN tras el rediseño
+# 18-sept (MG996R nuevo, pieza fusionada) - placeholders genericos hasta
+# recalibrar con el brazo impreso el lunes.
+ANGLE_ARM_TILT_MIN = 10
+ANGLE_ARM_TILT_MAX = 170
 ANGLE_GRIPPER_OPEN = 90   # calibrado 16-sept con la garra real
 ANGLE_GRIPPER_CLOSED = 0  # calibrado 16-sept con la garra real
 
@@ -90,7 +90,6 @@ ARM_MAX_ACCEL_PER_TICK = 0.08
 # frecuentes por el easing.
 ARM_STEP_DEG_PER_TICK = 2.0
 BASE_STEP_DEG_PER_TICK = 1.2  # giro de base mas lento que el resto (mas inercia)
-WRIST_STEP_DEG_PER_TICK = 2.0  # 16-sept: al maximo (igual que ARM_STEP_DEG_PER_TICK, 100 grados/seg) para descartar velocidad como causa del esfuerzo/tics
 
 # Bajar la garra va a favor de la gravedad, que la acelera entre un tick y
 # el siguiente -> se ve a tirones aunque el paso sea el mismo que al subir
@@ -100,31 +99,38 @@ WRIST_STEP_DEG_PER_TICK = 2.0  # 16-sept: al maximo (igual que ARM_STEP_DEG_PER_
 SHOULDER_DOWN_STEP_SCALE = 0.12
 
 # ---------------------------------------------------------------------------
-# Cinematica inversa (kinematics.py) - CALIBRADO 16-sept con el brazo real
-# (largos medidos + los 4 IK_*_SERVO_AT_ZERO/IK_*_SIGN de mas abajo,
-# ajustados a mano viendo el brazo). El joystick derecho del dashboard
-# mueve hombro/codo a traves de esta IK (ver main.py - _arm_easing_loop).
+# Cinematica inversa (kinematics.py) - brazo de 3 juntas acopladas desde el
+# rediseño 18-sept (hombro + codo + inclinacion de garra, ver
+# kinematics.solve3()). El joystick derecho mueve la POSICION (x,y) de la
+# punta de la garra; los botones que antes eran de la muneca ahora mueven
+# el ANGULO DE ACERCAMIENTO (phi) - las 3 juntas se recalculan juntas cada
+# vez para cumplir las dos cosas a la vez (ver main.py - _arm_easing_loop).
 # ---------------------------------------------------------------------------
-# Largo de los eslabones en mm. hombro->codo y codo->punta de la garra.
-# Medido con el brazo real armado (16-sept), eje de giro a eje de giro /
-# eje de giro a punta de la garra, linea recta.
-IK_L1_MM = 120.0  # hombro -> codo
-IK_L2_MM = 250.0  # codo -> punta de garra (con adaptador incluido)
+# Largo de los eslabones en mm, eje de giro a eje de giro (o a punta de
+# garra en el ultimo). hombro->codo sigue siendo el mismo brazo de antes
+# (medido 16-sept). codo->inclinacion e inclinacion->punta son NUEVOS
+# desde el rediseño (brazo 2+3 fusionados) - la pieza se imprime el
+# domingo, estos dos quedan en placeholder hasta medirla armada el lunes.
+IK_L1_MM = 120.0  # hombro -> codo (sin cambios, ya medido)
+IK_L2_MM = 180.0  # codo -> eje de inclinacion de garra (ex-muneca) - PLACEHOLDER, medir el lunes
+IK_L3_MM = 70.0   # eje de inclinacion -> punta de garra - PLACEHOLDER, medir el lunes
 
 # Calibracion servo<->matematica: que angulo de SERVO corresponde al
 # "cero matematico" (brazo horizontal hacia adelante) de cada junta, y si
 # aumentar el angulo matematico aumenta o disminuye el angulo de servo
 # (+1 o -1, segun para que lado quedo montado el horn). SE CALIBRAN A MANO:
-# 1. Mover el servo a IK_SHOULDER_SERVO_AT_ZERO grados.
-# 2. Ver si el brazo quedo horizontal hacia adelante de verdad.
+# 1. Mover el servo a IK_*_SERVO_AT_ZERO grados.
+# 2. Ver si el eslabon quedo horizontal hacia adelante de verdad.
 # 3. Si no, ajustar el numero hasta que sea asi.
-# 4. Para el signo: mover el servo unos grados mas y ver si el brazo sube
-#    o baja - si sube, IK_SHOULDER_SIGN=1 hace que theta1 positivo tambien
-#    suba (coherente); si baja, cambiar a -1.
+# 4. Para el signo: mover el servo unos grados mas y ver si el eslabon sube
+#    o baja - si sube, IK_*_SIGN=1 hace que theta positivo tambien suba
+#    (coherente); si baja, cambiar a -1.
 IK_SHOULDER_SERVO_AT_ZERO = 90.0
 IK_SHOULDER_SIGN = 1
 IK_ELBOW_SERVO_AT_ZERO = 115.0  # calibrado 16-sept con el brazo real
 IK_ELBOW_SIGN = 1
+IK_TILT_SERVO_AT_ZERO = 90.0  # PLACEHOLDER - recalibrar el lunes con la pieza nueva (MG996R)
+IK_TILT_SIGN = 1
 
 # Velocidad de movimiento cartesiano (mm/s de la punta de la garra) al
 # fondo del joystick derecho, ya con el nuevo control por IK (16-sept) -
@@ -133,6 +139,11 @@ IK_ELBOW_SIGN = 1
 # brazos de 70mm ronda los ~120mm/s en el extremo, se deja mas
 # conservador para no perder precision).
 IK_CARTESIAN_SPEED_MM_S = 80.0
+
+# Velocidad de cambio del angulo de acercamiento (phi, grados/seg) al
+# fondo de los botones que antes movian la muneca - controla que tan
+# rapido "rota" la garra en el lugar sin moverse de (x,y) (18-sept).
+IK_PHI_SPEED_DEG_S = 60.0
 
 # Posicion fija sobre la bandeja para la macro "soltar en bandeja"
 # (ver Especificacion de software en CLAUDE.md) - PROVISORIO.

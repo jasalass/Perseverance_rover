@@ -118,3 +118,73 @@ def infer_elbow_up(elbow_servo: float) -> bool:
     y el brazo saltaria de golpe al tocar el joystick por primera vez."""
     theta2 = (elbow_servo - config.IK_ELBOW_SERVO_AT_ZERO) / config.IK_ELBOW_SIGN
     return theta2 <= 0
+
+
+@dataclass
+class IKResult3:
+    """Como IKResult, pero para el brazo de 3 juntas (hombro+codo+
+    inclinacion de garra) desde el rediseño 18-sept - ver solve3()."""
+    shoulder_angle: float
+    elbow_angle: float
+    tilt_angle: float
+    reachable: bool
+    shoulder_angle_raw: float
+    elbow_angle_raw: float
+    tilt_angle_raw: float
+
+    @property
+    def achievable(self) -> bool:
+        return (
+            self.reachable
+            and 0.0 <= self.shoulder_angle_raw <= 180.0
+            and 0.0 <= self.elbow_angle_raw <= 180.0
+            and 0.0 <= self.tilt_angle_raw <= 180.0
+        )
+
+
+def solve3(x_mm: float, y_mm: float, phi_deg: float, elbow_up: bool = True) -> IKResult3:
+    """Brazo de 3 juntas en el mismo plano (hombro, codo, inclinacion de
+    garra - rediseño 18-sept, la ex-muneca ya no gira sobre si misma, es
+    un eslabon mas). x_mm/y_mm: punto objetivo de la PUNTA de la garra
+    (misma convencion que solve()). phi_deg: angulo de acercamiento
+    deseado, en grados y en la misma convencion matematica que
+    theta1/theta2 (0 = horizontal hacia adelante) - no solo A DONDE llega
+    la garra, tambien CON QUE ANGULO.
+
+    El truco: se le resta al punto objetivo el ultimo eslabon (L3) en la
+    direccion de phi, para hallar donde tendria que estar la junta de
+    inclinacion - ese punto intermedio se le pasa TAL CUAL a la misma
+    solve() de 2 eslabones de siempre (hombro/codo no se enteran de que
+    ahora hay una tercera junta). La junta de inclinacion es literalmente
+    "lo que falta" para que theta1+theta2+theta3 sume phi."""
+    phi_rad = math.radians(phi_deg)
+    l3 = config.IK_L3_MM
+    wrist_x = x_mm - l3 * math.cos(phi_rad)
+    wrist_y = y_mm - l3 * math.sin(phi_rad)
+
+    arm2 = solve(wrist_x, wrist_y, elbow_up=elbow_up)
+
+    theta1 = math.radians((arm2.shoulder_angle_raw - config.IK_SHOULDER_SERVO_AT_ZERO) / config.IK_SHOULDER_SIGN)
+    theta2 = math.radians((arm2.elbow_angle_raw - config.IK_ELBOW_SERVO_AT_ZERO) / config.IK_ELBOW_SIGN)
+    theta3 = phi_rad - theta1 - theta2
+
+    tilt_raw = config.IK_TILT_SERVO_AT_ZERO + config.IK_TILT_SIGN * math.degrees(theta3)
+    tilt_servo = max(0.0, min(180.0, tilt_raw))
+
+    return IKResult3(
+        shoulder_angle=arm2.shoulder_angle, elbow_angle=arm2.elbow_angle, tilt_angle=tilt_servo,
+        reachable=arm2.reachable,
+        shoulder_angle_raw=arm2.shoulder_angle_raw, elbow_angle_raw=arm2.elbow_angle_raw, tilt_angle_raw=tilt_raw,
+    )
+
+
+def current_phi(shoulder_servo: float, elbow_servo: float, tilt_servo: float) -> float:
+    """Angulo de acercamiento ACTUAL de la garra (grados, misma convencion
+    que solve3/phi_deg) a partir de los 3 angulos de servo reales - para
+    resincronizar el control por IK con la pose real del brazo (main.py,
+    _ik_pos_dirty), misma idea que forward_from_servo() pero sumando el
+    aporte de la tercera junta."""
+    theta1 = math.radians((shoulder_servo - config.IK_SHOULDER_SERVO_AT_ZERO) / config.IK_SHOULDER_SIGN)
+    theta2 = math.radians((elbow_servo - config.IK_ELBOW_SERVO_AT_ZERO) / config.IK_ELBOW_SIGN)
+    theta3 = math.radians((tilt_servo - config.IK_TILT_SERVO_AT_ZERO) / config.IK_TILT_SIGN)
+    return math.degrees(theta1 + theta2 + theta3)
