@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Percy - Control</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#070a0c">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css?v=20260916d">
+</head>
+<body>
+  <!-- plantilla de icono, referenciada por <use> - un solo trazo, se reusa
+       tal cual para "sentido antihorario" y espejado (CSS) para "horario" -->
+  <svg width="0" height="0" style="position:absolute">
+    <symbol id="ic-rot" viewBox="0 0 24 24">
+      <path d="M5 11a7 7 0 1 1 2 5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M5 16.2V11h5.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-claw" viewBox="0 0 24 24">
+      <path d="M12 3v6M12 9c-2.5 0-4 2-4 5s1 6 4 7c3-1 4-4 4-7s-1.5-5-4-5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M8.5 10.5 6 8M15.5 10.5 18 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-drop" viewBox="0 0 24 24">
+      <path d="M12 3v10m0 0-3.2-3.2M12 13l3.2-3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M5 17.5h14M6 21h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-phone" viewBox="0 0 24 24">
+      <rect x="7" y="2" width="10" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <line x1="11" y1="18.5" x2="13" y2="18.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-expand" viewBox="0 0 24 24">
+      <path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-rec" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-play" viewBox="0 0 24 24">
+      <path d="M7 4.5v15l13-7.5-13-7.5Z" fill="currentColor"/>
+    </symbol>
+  </svg>
+
+  <div id="rotate-notice">
+    <svg><use href="#ic-phone"/></svg>
+    <span>GIRA EL TEL&Eacute;FONO<br>A HORIZONTAL</span>
+  </div>
+
+  <!-- video de fondo, a pantalla completa -->
+  <div id="fpv-wrap">
+    <img id="fpv" alt="camara">
+    <span id="fpv-off">SIN&nbsp;VIDEO</span>
+  </div>
+
+  <!-- controles flotando encima, semitransparentes -->
+  <div id="hud">
+    <div id="brand">
+      <span id="brand-name">PERCY</span>
+      <span id="brand-sub">EREBUS&#8209;I &middot; CITT&#8209;2026</span>
+    </div>
+    <span id="mission-clock" data-label="MISI&Oacute;N">T+00:00</span>
+    <div id="speed-select">
+      <button data-speed="0">I</button>
+      <button data-speed="1" class="active">II</button>
+      <button data-speed="2">III</button>
+    </div>
+    <span id="conn-status" class="disconnected"><i class="dot"></i><span id="conn-label">SIN&nbsp;SE&Ntilde;AL</span></span>
+    <button id="btn-fullscreen" title="Pantalla completa"><svg><use href="#ic-expand"/></svg></button>
+    <div id="rec-widget">
+      <button id="btn-rec-lock" title="Posiciones guardadas"><svg><use href="#ic-rec"/></svg></button>
+      <div id="rec-panel">
+        <span class="panel-label">POSICIONES</span>
+        <button id="btn-preset-save"><svg><use href="#ic-rec"/></svg>GUARDAR ACTUAL</button>
+        <div id="preset-list"></div>
+        <span class="panel-label">&Aacute;NGULOS</span>
+        <div id="angle-readout"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="joy-zone">
+      <span class="zone-label">TRACCI&Oacute;N</span>
+      <div id="joy-left" class="joystick"><div class="ring"></div><div class="crosshair"></div><div class="stick"></div></div>
+    </div>
+
+    <div id="arm-extra" class="panel">
+      <span class="panel-label">BRAZO &mdash; EJES</span>
+      <div class="pair">
+        <span>BASE</span>
+        <div class="btnpair">
+          <button data-axis="base_dir" data-val="-1"><svg><use href="#ic-rot"/></svg></button>
+          <button data-axis="base_dir" data-val="1" class="mirror"><svg><use href="#ic-rot"/></svg></button>
+        </div>
+      </div>
+      <div class="pair">
+        <span>MU&Ntilde;ECA</span>
+        <div class="btnpair">
+          <button data-axis="wrist_dir" data-val="-1"><svg><use href="#ic-rot"/></svg></button>
+          <button data-axis="wrist_dir" data-val="1" class="mirror"><svg><use href="#ic-rot"/></svg></button>
+        </div>
+      </div>
+      <div class="pair">
+        <span>GIRO GARRA</span>
+        <div class="btnpair">
+          <button data-axis="gripper_rotate_dir" data-val="-1"><svg><use href="#ic-rot"/></svg></button>
+          <button data-axis="gripper_rotate_dir" data-val="1" class="mirror"><svg><use href="#ic-rot"/></svg></button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <button id="btn-grip" class="action warn"><svg><use href="#ic-claw"/></svg>GARRA</button>
+      <button id="btn-deposit" class="action ok"><svg><use href="#ic-drop"/></svg>DEPOSITAR</button>
+    </div>
+
+    <div class="joy-zone">
+      <div class="zone-label-row">
+        <span class="zone-label" id="arm-mode-label">GARRA &middot; ALCANCE</span>
+        <button id="btn-arm-mode" title="Cambiar modo del brazo">IK</button>
+      </div>
+      <div id="joy-right" class="joystick"><div class="ring"></div><div class="crosshair"></div><div class="stick"></div></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=20260916d"></script>
+</body>
+</html>

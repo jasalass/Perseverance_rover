@@ -1,0 +1,14 @@
+[Unit]
+Description=Percy Rover Control Server
+After=network.target
+
+[Service]
+Type=simple
+User=orangepi
+WorkingDirectory=/home/orangepi/percy
+ExecStart=/usr/bin/python3 /home/orangepi/percy/main.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

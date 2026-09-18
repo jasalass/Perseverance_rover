@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+adafruit-circuitpython-pca9685
+adafruit-circuitpython-motor
+adafruit-extended-bus
+
+# NO instalar por pip (ya vienen del sistema, instalados via apt en la
+# Orange Pi - ver CLAUDE.md "Estado real del setup"):
+#   - opencv-python -> usa el python3-opencv de apt (cv2 4.5.4)
+#   - gpiod -> usa el python3-libgpiod de apt (v1.6.3, API v1). La version
+#     de PyPI 'gpiod' reciente es API v2 y NO es compatible con el codigo
+#     de motors.py tal como esta escrito (usa gpiod.Chip/LINE_REQ_DIR_OUT
+#     de la API v1) - instalarla por pip rompe motors.py.

@@ -1,0 +1,12 @@
+{
+  "name": "Percy Rover Control",
+  "short_name": "Percy",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070a0c",
+  "theme_color": "#070a0c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
