@@ -2,3 +2,16 @@ docs
 CLAUDE.md
 __pycache__/
 *.pyc
+
+# Modelo de voz Vosk (~40MB, descargado/empaquetado, no se versiona - ver
+# orangepi/voice_models/README.md para regenerarlo).
+orangepi/static/voice/model.tar.gz
+orangepi/voice_models/*.zip
+orangepi/voice_models/*.tar.gz
+orangepi/voice_models/vosk-model-small-es-0.42/
+orangepi/voice_models/server*.log
+
+# Certificado HTTPS autofirmado - clave privada, no se versiona. Se
+# regenera con el comando en orangepi/README.md (seccion HTTPS).
+orangepi/percy.key
+orangepi/percy.crt

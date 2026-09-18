@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Prueba control por voz - Percy</title>
+<style>
+  body { font-family: monospace; background: #111; color: #eee; padding: 20px; max-width: 500px; margin: auto; }
+  h1 { font-size: 16px; color: #35e0c0; }
+  #btn-talk {
+    width: 100%; padding: 30px; font-size: 20px; margin: 15px 0;
+    background: #222; color: #fff; border: 2px solid #35e0c0; border-radius: 8px;
+  }
+  #btn-talk.listening { background: #ff5468; border-color: #ff5468; }
+  #status { color: #9db3af; font-size: 13px; }
+  #partial { color: #ffb454; min-height: 20px; }
+  #log { margin-top: 15px; border-top: 1px solid #333; padding-top: 10px; }
+  #log div { padding: 4px 0; border-bottom: 1px solid #222; }
+  .match { color: #58e08a; }
+  .nomatch { color: #ff5468; }
+  ul { color: #9db3af; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>PERCY - prueba de control por voz (local, offline)</h1>
+  <div id="status">Cargando modelo...</div>
+  <button id="btn-talk" disabled>MANTENER PARA HABLAR</button>
+  <div id="partial"></div>
+  <div>Comandos:</div>
+  <ul>
+    <li>abrir garra</li>
+    <li>cerrar garra</li>
+    <li>depositar</li>
+    <li>posicion inicial</li>
+    <li>traslado</li>
+    <li>parar</li>
+    <li>alto</li>
+  </ul>
+  <div id="log"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+  <script>
+    const COMMANDS = ["abrir garra", "cerrar garra", "depositar", "posicion inicial", "traslado", "parar", "alto"];
+    const statusEl = document.getElementById("status");
+    const partialEl = document.getElementById("partial");
+    const logEl = document.getElementById("log");
+    const btn = document.getElementById("btn-talk");
+
+    let model = null;
+    let recognizer = null;
+    let audioContext = null;
+    let mediaStream = null;
+    let sourceNode = null;
+    let processorNode = null;
+
+    function log(text, matched) {
+      const div = document.createElement("div");
+      div.className = matched ? "match" : "nomatch";
+      div.textContent = `"${text}" ${matched ? "-> comando: " + matched : "(no matchea ningun comando)"}`;
+      logEl.prepend(div);
+    }
+
+    async function init() {
+      try {
+        model = await Vosk.createModel("model.tar.gz");
+        statusEl.textContent = "Modelo listo. Mantene apretado el boton y hablá.";
+        btn.disabled = false;
+      } catch (e) {
+        statusEl.textContent = "Error cargando el modelo: " + e;
+        console.error(e);
+      }
+    }
+
+    async function startListening() {
+      btn.classList.add("listening");
+      btn.textContent = "ESCUCHANDO...";
+      partialEl.textContent = "";
+
+      const grammar = JSON.stringify(COMMANDS.concat(["[unk]"]));
+      recognizer = new model.KaldiRecognizer(48000, grammar);
+      recognizer.setWords(true);
+
+      recognizer.on("result", (message) => {
+        const text = (message.result.text || "").trim();
+        if (text) {
+          const matched = COMMANDS.find((c) => c === text);
+          log(text, matched);
+        }
+      });
+      recognizer.on("partialresult", (message) => {
+        partialEl.textContent = message.result.partial || "";
+      });
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      audioContext = new AudioContext();
+      sourceNode = audioContext.createMediaStreamSource(mediaStream);
+      processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+      processorNode.onaudioprocess = (event) => {
+        recognizer.acceptWaveform(event.inputBuffer);
+      };
+      sourceNode.connect(processorNode);
+      processorNode.connect(audioContext.destination);
+    }
+
+    function stopListening() {
+      btn.classList.remove("listening");
+      btn.textContent = "MANTENER PARA HABLAR";
+      partialEl.textContent = "";
+      if (processorNode) { processorNode.disconnect(); processorNode = null; }
+      if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+      if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      if (recognizer) { recognizer.remove(); recognizer = null; }
+    }
+
+    btn.addEventListener("mousedown", startListening);
+    btn.addEventListener("mouseup", stopListening);
+    btn.addEventListener("touchstart", (e) => { e.preventDefault(); startListening(); });
+    btn.addEventListener("touchend", (e) => { e.preventDefault(); stopListening(); });
+
+    init();
+  </script>
+</body>
+</html>

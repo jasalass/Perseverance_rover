@@ -250,4 +250,7 @@ svg { width: 100%; height: 100%; }
 #btn-deposit.ok { border-color: var(--ok); color: var(--ok); }
 #btn-deposit.ok:active { background: rgba(88, 224, 138, 0.2); border-color: var(--ok); box-shadow: 0 0 10px rgba(88, 224, 138, 0.3) inset; }
 
+#btn-voice:disabled { opacity: 0.4; }
+#btn-voice.listening { border-color: var(--crit); color: var(--crit); background: rgba(255, 84, 104, 0.18); box-shadow: 0 0 10px rgba(255, 84, 104, 0.35) inset; animation: blink 1.1s ease-in-out infinite; }
+
 .divider { height: 1px; background: var(--line); }

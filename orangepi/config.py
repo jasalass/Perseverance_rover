@@ -212,6 +212,18 @@ FAILSAFE_ENABLED = False
 WS_HOST = "0.0.0.0"
 WS_PORT = 8000
 
+# HTTPS (18-sept, rama control_voz) - el control por voz necesita
+# getUserMedia() en el celular, que el navegador solo permite en un
+# "contexto seguro" (https:// o localhost) - el dashboard por HTTP plano
+# en la IP de la red local NO alcanza. Certificado autofirmado (no hay
+# forma de conseguir uno real sin dominio publico); el navegador va a
+# avisar "conexion no seria privada" la primera vez, hay que aceptarlo
+# manualmente una vez (o instalar el cert como confiable en el celular).
+# Si los archivos no existen, main.py arranca en HTTP plano igual (asi
+# sigue sirviendo para desarrollo local en Windows sin el cert generado).
+SSL_KEYFILE = "percy.key"
+SSL_CERTFILE = "percy.crt"
+
 # Indice de la camara para cv2.VideoCapture. En la Orange Pi con una sola
 # camara USB, 0 alcanza. En un PC con camara integrada + la USB conectada
 # (pruebas locales), puede haber mas de un indice - ajustar si toma la

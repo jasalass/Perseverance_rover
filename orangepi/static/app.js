@@ -45,7 +45,11 @@
   const statusLabel = document.getElementById("conn-label");
 
   function connect() {
-    const url = `ws://${location.hostname}:8000/ws`;
+    // wss:// si la pagina se sirvio por https (18-sept, HTTPS para el
+    // control por voz) - un ws:// plano desde una pagina https se bloquea
+    // como "contenido mixto", el navegador ni intenta conectar.
+    const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${wsProto}//${location.hostname}:8000/ws`;
     ws = new WebSocket(url);
     ws.onopen = () => {
       statusLabel.textContent = "EN LINEA";
@@ -200,6 +204,122 @@
   // --- Botones de accion (garra / deposito) --------------------
   document.getElementById("btn-grip").addEventListener("click", () => { state.grip = 1; vibrate(25); });
   document.getElementById("btn-deposit").addEventListener("click", () => { state.deposit = 1; vibrate([20, 30, 20]); });
+
+  // --- Control por voz (18-sept, rama control_voz) -------------------------
+  // Reconocimiento 100% local en el navegador (Vosk-browser, WASM) - nada
+  // de audio sale del celular ni depende de internet. Vocabulario cerrado
+  // (gramatica) en vez de reconocimiento abierto, mucho mas robusto al
+  // ruido real de un venue que "entender cualquier frase". Mantener
+  // apretado para hablar, soltar corta - evita que capte ruido de fondo
+  // como comando por error.
+  //
+  // OJO: getUserMedia (microfono) exige HTTPS o localhost - el dashboard
+  // se sirve hoy por HTTP plano en la red local (192.168.x.x), asi que el
+  // navegador va a rechazar el permiso hasta que el server tenga HTTPS
+  // (ver orangepi/voice_models/README.md).
+  const VOICE_COMMANDS = ["abrir garra", "cerrar garra", "depositar", "posicion inicial", "traslado", "parar", "alto"];
+  const voiceBtn = document.getElementById("btn-voice");
+  const voiceLabel = document.getElementById("btn-voice-label");
+  let voiceModel = null;
+  let voiceRecognizer = null;
+  let voiceAudioCtx = null;
+  let voiceStream = null;
+  let voiceSource = null;
+  let voiceProcessor = null;
+
+  function handleVoiceCommand(text) {
+    switch (text) {
+      case "abrir garra":
+      case "cerrar garra":
+        state.grip = 1;
+        vibrate(25);
+        break;
+      case "depositar":
+        state.deposit = 1;
+        vibrate([20, 30, 20]);
+        break;
+      case "traslado":
+      case "posicion inicial":
+        state.preset_goto = text; // solo hace algo si existe un preset guardado con ese nombre
+        vibrate(15);
+        break;
+      case "parar":
+      case "alto":
+        // corta cualquier movimiento sostenido (joysticks + botones de eje) al toque
+        state.lx = 0; state.ly = 0; state.arm_x_dir = 0; state.arm_y_dir = 0;
+        state.base_dir = 0; state.wrist_dir = 0;
+        vibrate([15, 15, 15, 15, 15]);
+        break;
+    }
+  }
+
+  async function loadVoiceModel() {
+    if (typeof Vosk === "undefined") {
+      voiceLabel.textContent = "VOZ NO DISPONIBLE";
+      return;
+    }
+    try {
+      voiceModel = await Vosk.createModel("voice/model.tar.gz");
+      voiceBtn.disabled = false;
+      voiceLabel.textContent = "VOZ";
+      console.log("[voz] modelo cargado, boton habilitado");
+    } catch (e) {
+      voiceLabel.textContent = "VOZ NO DISPONIBLE";
+      console.error("No se pudo cargar el modelo de voz:", e);
+    }
+  }
+
+  async function startVoiceListening() {
+    console.log("[voz] press detectado - voiceModel:", !!voiceModel, "disabled:", voiceBtn.disabled);
+    if (!voiceModel || voiceBtn.disabled) return;
+    voiceBtn.classList.add("listening");
+    voiceLabel.textContent = "ESCUCHANDO…";
+
+    const grammar = JSON.stringify(VOICE_COMMANDS.concat(["[unk]"]));
+    voiceRecognizer = new voiceModel.KaldiRecognizer(48000, grammar);
+    voiceRecognizer.on("result", (message) => {
+      const text = (message.result.text || "").trim();
+      console.log("[voz] reconocido:", JSON.stringify(text), VOICE_COMMANDS.includes(text) ? "-> match" : "-> sin match");
+      if (VOICE_COMMANDS.includes(text)) handleVoiceCommand(text);
+    });
+    voiceRecognizer.on("partialresult", (message) => {
+      if (message.result.partial) console.log("[voz] parcial:", message.result.partial);
+    });
+
+    try {
+      voiceStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+    } catch (e) {
+      voiceLabel.textContent = "SIN PERMISO DE MIC";
+      voiceBtn.classList.remove("listening");
+      console.error("getUserMedia fallo (necesita HTTPS o localhost):", e);
+      return;
+    }
+    voiceAudioCtx = new AudioContext();
+    voiceSource = voiceAudioCtx.createMediaStreamSource(voiceStream);
+    voiceProcessor = voiceAudioCtx.createScriptProcessor(4096, 1, 1);
+    voiceProcessor.onaudioprocess = (event) => voiceRecognizer.acceptWaveform(event.inputBuffer);
+    voiceSource.connect(voiceProcessor);
+    voiceProcessor.connect(voiceAudioCtx.destination);
+  }
+
+  function stopVoiceListening() {
+    voiceBtn.classList.remove("listening");
+    voiceLabel.textContent = "VOZ";
+    if (voiceProcessor) { voiceProcessor.disconnect(); voiceProcessor = null; }
+    if (voiceSource) { voiceSource.disconnect(); voiceSource = null; }
+    if (voiceStream) { voiceStream.getTracks().forEach((t) => t.stop()); voiceStream = null; }
+    if (voiceAudioCtx) { voiceAudioCtx.close(); voiceAudioCtx = null; }
+    if (voiceRecognizer) { voiceRecognizer.remove(); voiceRecognizer = null; }
+  }
+
+  voiceBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startVoiceListening(); });
+  voiceBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopVoiceListening(); });
+  voiceBtn.addEventListener("mousedown", startVoiceListening);
+  voiceBtn.addEventListener("mouseup", stopVoiceListening);
+
+  loadVoiceModel();
 
   // --- Selector de velocidad ----------------------------------------------
   document.querySelectorAll("#speed-select button").forEach((btn) => {

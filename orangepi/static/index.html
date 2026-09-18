@@ -8,7 +8,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#070a0c">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=20260918a">
+<link rel="stylesheet" href="style.css?v=20260918b">
 </head>
 <body>
   <!-- plantilla de icono, referenciada por <use> - un solo trazo, se reusa
@@ -38,6 +38,10 @@
     </symbol>
     <symbol id="ic-play" viewBox="0 0 24 24">
       <path d="M7 4.5v15l13-7.5-13-7.5Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-mic" viewBox="0 0 24 24">
+      <rect x="9" y="2" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
     </symbol>
   </svg>
 
@@ -103,6 +107,7 @@
       <div class="divider"></div>
       <button id="btn-grip" class="action warn"><svg><use href="#ic-claw"/></svg>GARRA</button>
       <button id="btn-deposit" class="action ok"><svg><use href="#ic-drop"/></svg>DEPOSITAR</button>
+      <button id="btn-voice" class="action" disabled><svg><use href="#ic-mic"/></svg><span id="btn-voice-label">CARGANDO VOZ&hellip;</span></button>
     </div>
 
     <div class="joy-zone">
@@ -114,6 +119,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260918a"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+  <script src="app.js?v=20260918b"></script>
 </body>
 </html>

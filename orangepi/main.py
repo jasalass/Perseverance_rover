@@ -398,6 +398,18 @@ app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
-    uvicorn.run(app, host=config.WS_HOST, port=config.WS_PORT)
+    ssl_kwargs = {}
+    if os.path.exists(config.SSL_KEYFILE) and os.path.exists(config.SSL_CERTFILE):
+        ssl_kwargs = {"ssl_keyfile": config.SSL_KEYFILE, "ssl_certfile": config.SSL_CERTFILE}
+        log.info("HTTPS activo (cert autofirmado) - el navegador va a pedir aceptar la conexion la primera vez")
+    else:
+        log.warning(
+            "Sin %s/%s - arrancando en HTTP plano. El control por voz (getUserMedia) "
+            "NO va a funcionar en el celular sin HTTPS (localhost si sirve para pruebas locales).",
+            config.SSL_KEYFILE, config.SSL_CERTFILE,
+        )
+    uvicorn.run(app, host=config.WS_HOST, port=config.WS_PORT, **ssl_kwargs)

@@ -35,6 +35,32 @@ Si cambias algo en el código y lo vuelves a copiar con `pscp`, hay que
 alcanza con `python3 main.py` a mano (quedaría un segundo proceso
 compitiendo por el puerto 8000 con el que ya administra systemd).
 
+## HTTPS (necesario para el control por voz, rama `control_voz`)
+
+El microfono del celular (`getUserMedia`) solo funciona en un "contexto
+seguro" - `https://` o `localhost`. El dashboard servido por HTTP plano
+en la IP de la red local (como esta hoy) no alcanza, asi que main.py
+necesita un certificado. Se usa uno autofirmado (no hay forma de
+conseguir uno real sin dominio publico) - `config.SSL_KEYFILE`/
+`SSL_CERTFILE` apuntan a `percy.key`/`percy.crt` en esta misma carpeta;
+si no existen, main.py arranca en HTTP plano igual (sirve para
+desarrollo local sin voz).
+
+Generar el certificado (regenerar si cambia la IP de la Orange Pi, ej.
+al pasar a un punto de acceso propio):
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -keyout percy.key -out percy.crt -days 825 \
+  -subj "/CN=percy.local" \
+  -addext "subjectAltName=IP:<ip-orange-pi>,DNS:localhost,IP:127.0.0.1"
+```
+
+Copiar `percy.key`/`percy.crt` junto con el resto de la carpeta al
+hacer `pscp`. La primera vez que el celular entra a
+`https://<ip-orange-pi>:8000/`, el navegador va a avisar "la conexion
+no es privada" (normal con un cert autofirmado) - hay que aceptarlo
+manualmente una vez ("Avanzado" -> "Continuar de todas formas").
+
 ## Antes de conectar servos/motores de verdad
 
 Todos los pines/canales estan centralizados en `config.py`. **No estan
