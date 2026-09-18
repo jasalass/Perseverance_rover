@@ -15,6 +15,7 @@
     preset_save: null, preset_goto: null, preset_delete: null,
     speed: 1,
     arm_mode: "ik", // "ik" = joystick derecho mueve la garra en linea recta; "joint" = hombro/codo directo (ver btn-arm-mode)
+    drive_mode: "combinado", // "combinado" | "vehiculo" | "tanque" (ver btn-drive-mode)
   };
 
   const SEND_INTERVAL_MS = 50; // 20Hz - mas fluido, sigue bien por debajo del failsafe de 500ms
@@ -187,6 +188,23 @@
     armModeBtn.textContent = toJoint ? "LIBRE" : "IK";
     armModeBtn.classList.toggle("on", toJoint);
     armModeLabel.textContent = toJoint ? "HOMBRO / CODO" : "GARRA · ALCANCE";
+  });
+
+  // --- Switch modo de traccion (18-sept) -----------------------------------
+  // Combinado (default) = las ruedas de esquina Y el diferencial giran a
+  // la vez con el mismo lx. Vehiculo = solo dirigen las ruedas (los dos
+  // lados a igual velocidad, como un auto). Tanque = solo diferencial
+  // entre lados, ruedas de esquina fijas al centro (radio de giro cero).
+  // El backend decide que hacer con lx/ly segun _drive_mode (ver main.py).
+  const DRIVE_MODE_LABELS = { combinado: "COMB", vehiculo: "VEHÍCULO", tanque: "TANQUE" };
+  const DRIVE_MODES = Object.keys(DRIVE_MODE_LABELS);
+  const driveModeBtn = document.getElementById("btn-drive-mode");
+  driveModeBtn.addEventListener("click", () => {
+    const next = DRIVE_MODES[(DRIVE_MODES.indexOf(state.drive_mode) + 1) % DRIVE_MODES.length];
+    state.drive_mode = next;
+    driveModeBtn.textContent = DRIVE_MODE_LABELS[next];
+    driveModeBtn.classList.toggle("on", next !== "combinado");
+    vibrate(15);
   });
 
   // --- Botones extra del brazo (base + muneca) ---------------------------

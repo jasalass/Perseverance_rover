@@ -105,9 +105,19 @@ _arm_mode = "ik"
 # rato que se mantiene contra el limite).
 _arm_hit_limit = False
 
+# Modo de traccion (18-sept): "combinado" (default) mueve las 4 ruedas de
+# esquina Y crea diferencia de velocidad entre lados con el mismo lx a la
+# vez - un poco de las dos ventajas en cada giro. "vehiculo" gira SOLO con
+# las ruedas de esquina (los dos lados a la misma velocidad, como un auto)
+# - menos esfuerzo/desgaste en terreno suelto, pero necesita mas espacio
+# para girar. "tanque" gira SOLO por diferencial entre lados, con las
+# ruedas de esquina fijas al centro (derecho) - radio de giro cero, util
+# en espacios chicos, pero arrastra las ruedas lateralmente contra el piso.
+_drive_mode = "combinado"
+
 
 def _apply_command(data: dict):
-    global _last_message_ts, _failsafe_tripped, _arm_mode
+    global _last_message_ts, _failsafe_tripped, _arm_mode, _drive_mode
     _last_message_ts = time.monotonic()
     _failsafe_tripped = False
 
@@ -120,17 +130,35 @@ def _apply_command(data: dict):
             # cambiado mientras estuvo en modo LIBRE).
             _mark_ik_dirty()
 
+    drive_mode = data.get("drive_mode")
+    if drive_mode in ("combinado", "vehiculo", "tanque"):
+        _drive_mode = drive_mode
+
     lx = float(data.get("lx", 0.0))
     ly = float(data.get("ly", 0.0))
     speed = int(data.get("speed", 1))
 
-    left = ly + lx
-    right = ly - lx
-    m = max(abs(left), abs(right), 1.0)
-    left, right = left / m, right / m
+    if _drive_mode == "vehiculo":
+        # Solo dirigen las ruedas de esquina - los dos lados a la misma
+        # velocidad, sin diferencial. lx NO entra en left/right.
+        left = right = ly
+        servos.set_steering(lx)
+    elif _drive_mode == "tanque":
+        # Solo diferencial entre lados - ruedas de esquina fijas al centro
+        # (no arrastran contra el giro).
+        left = ly + lx
+        right = ly - lx
+        m = max(abs(left), abs(right), 1.0)
+        left, right = left / m, right / m
+        servos.set_steering(0.0)
+    else:  # "combinado" (default)
+        left = ly + lx
+        right = ly - lx
+        m = max(abs(left), abs(right), 1.0)
+        left, right = left / m, right / m
+        servos.set_steering(lx)
 
     motors.set_motors(left, right, speed)
-    servos.set_steering(lx)
 
     # El brazo no se mueve aca directo - solo se actualiza la velocidad
     # PEDIDA. _arm_easing_loop es el que de verdad llama a servos.move_arm
@@ -357,6 +385,7 @@ async def status():
         "seconds_since_last_command": round(time.monotonic() - _last_message_ts, 2),
         "preset_moving": presets.moving,
         "arm_mode": _arm_mode,
+        "drive_mode": _drive_mode,
     }
 
 
