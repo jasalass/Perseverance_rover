@@ -43,7 +43,7 @@ async def no_cache(request, call_next):
 
 
 servos = ServoController()
-motors = MotorController()
+motors = MotorController(servos)
 camera = CameraStream()  # autodetecta el indice por nombre - ver camera.py
 presets = PresetManager(servos)
 
@@ -110,14 +110,23 @@ _arm_hit_limit = False
 # vez - un poco de las dos ventajas en cada giro. "vehiculo" gira SOLO con
 # las ruedas de esquina (los dos lados a la misma velocidad, como un auto)
 # - menos esfuerzo/desgaste en terreno suelto, pero necesita mas espacio
-# para girar. "tanque" gira SOLO por diferencial entre lados, con las
-# ruedas de esquina fijas al centro (derecho) - radio de giro cero, util
-# en espacios chicos, pero arrastra las ruedas lateralmente contra el piso.
+# para girar. "tanque" combina diferencial entre lados CON las 4 ruedas
+# de esquina en diagonal (patron de rombo, cada una apuntando al centro
+# del rover - ver servos.set_pivot_steering) - pivote de radio cero SIN
+# arrastrar las ruedas de costado, a diferencia de un tanque de oruga
+# comun. Geometria calculada con las medidas reales del chasis (ver
+# config.PIVOT_STEER_DELTA) y confirmada a mano que el varillaje aguanta.
 _drive_mode = "combinado"
+
+# True mientras el interlock brazo/traccion (ver _apply_command) esta
+# forzando los N20 a 0 - expuesto en /status nomas para poder confirmar por
+# SSH que el corte esta actuando de verdad, sin tener que adivinar por que
+# el rover "no responde" al joystick de traccion mientras se mueve el brazo.
+_arm_busy = False
 
 
 def _apply_command(data: dict):
-    global _last_message_ts, _failsafe_tripped, _arm_mode, _drive_mode
+    global _last_message_ts, _failsafe_tripped, _arm_mode, _drive_mode, _arm_busy
     _last_message_ts = time.monotonic()
     _failsafe_tripped = False
 
@@ -138,19 +147,45 @@ def _apply_command(data: dict):
     ly = float(data.get("ly", 0.0))
     speed = int(data.get("speed", 1))
 
+    # Interlock brazo/traccion (18-sept): los MG996R del brazo y los 6 N20
+    # de traccion terminaron compartiendo el mismo riel de 6V (ya no hay
+    # power bank aparte aislando el consumo del brazo del de los motores -
+    # ver historial de la conversacion) - no hay margen de corriente medido
+    # para los dos a fondo al mismo tiempo. Mientras el brazo este pedido a
+    # moverse (target de este mensaje) O todavia decelerando de un mensaje
+    # anterior (_arm_current/_ik_current_vel, el easing loop no llega
+    # instantaneo a 0) O un preset/deposit este en curso, se fuerza a 0 SOLO
+    # la potencia de los N20 (left/right mas abajo) - el steering sigue
+    # respondiendo a lx normal (SG90, consumo bajo, no es el problema).
+    arm_requested = (
+        float(data.get("base_dir", 0)) != 0.0
+        or float(data.get("arm_x_dir", 0.0)) != 0.0
+        or float(data.get("arm_y_dir", 0.0)) != 0.0
+        or float(data.get("wrist_dir", 0.0)) != 0.0
+    )
+    arm_busy = (
+        arm_requested
+        or any(_arm_current.values())
+        or any(_ik_current_vel.values())
+        or presets.moving
+        or bool(data.get("deposit"))
+    )
+    _arm_busy = arm_busy
+
     if _drive_mode == "vehiculo":
         # Solo dirigen las ruedas de esquina - los dos lados a la misma
         # velocidad, sin diferencial. lx NO entra en left/right.
         left = right = ly
         servos.set_steering(lx)
     elif _drive_mode == "tanque":
-        # Solo diferencial entre lados - ruedas de esquina fijas al centro
-        # (no arrastran contra el giro).
+        # Diferencial entre lados + las 4 ruedas en diagonal (rombo) -
+        # pivote real sin arrastrar las ruedas de costado (ver
+        # servos.set_pivot_steering). Con lx=0 las ruedas quedan derechas.
         left = ly + lx
         right = ly - lx
         m = max(abs(left), abs(right), 1.0)
         left, right = left / m, right / m
-        servos.set_steering(0.0)
+        servos.set_pivot_steering(lx)
     else:  # "combinado" (default)
         left = ly + lx
         right = ly - lx
@@ -158,6 +193,8 @@ def _apply_command(data: dict):
         left, right = left / m, right / m
         servos.set_steering(lx)
 
+    if arm_busy:
+        left = right = 0.0
     motors.set_motors(left, right, speed)
 
     # El brazo no se mueve aca directo - solo se actualiza la velocidad
@@ -386,6 +423,7 @@ async def status():
         "preset_moving": presets.moving,
         "arm_mode": _arm_mode,
         "drive_mode": _drive_mode,
+        "arm_busy": _arm_busy,
     }
 
 

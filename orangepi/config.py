@@ -151,33 +151,56 @@ DEPOSIT_ARM_BASE = 90
 DEPOSIT_SHOULDER = 60
 DEPOSIT_ELBOW = 130
 
-# Steering: centro y giro maximo por rueda - PROVISORIO, calibrar en pista.
-STEER_CENTER = {"fl": 90, "fr": 90, "rl": 90, "rr": 90}
-STEER_MAX_DELTA = 35  # grados +/- desde el centro
+# Steering: centro por rueda, calibrado a mano con las 4 conectadas
+# (18-sept). STEER_MAX_DELTA es el manejo normal tipo auto (joystick);
+# PIVOT_STEER_DELTA es el angulo para el pivote/modo tanque real (las 4
+# ruedas en diagonal apuntando al centro, ver kinematics del chasis:
+# atan(wheelbase/2 / track/2) = atan(11.75/9) = 52.5 grados - confirmado
+# a mano que el varillaje del fl llega sin trabarse a los dos extremos).
+STEER_CENTER = {"fl": 85, "fr": 90, "rl": 85, "rr": 95}
+STEER_MAX_DELTA = 35  # grados +/- desde el centro, manejo normal
+PIVOT_STEER_DELTA = 52.5  # grados +/- desde el centro, modo tanque real
 
 # ---------------------------------------------------------------------------
-# Motores de traccion (2x TB6612FNG por lado + 1 modulo mas por si acaso,
-# 1 motor por canal, control compartido por lado - ver guia de cableado
-# en CLAUDE.md). GPIO como (chip, linea) para libgpiod, calculados de la
-# tabla real `gpio readall`: chip = gpio_global // 32, linea = gpio_global % 32.
-# ---------------------------------------------------------------------------
-# Lado izquierdo
-PIN_LEFT_IN1 = (3, 22)   # fisico 11 - GPIO118 (GPIO3_C6)
-PIN_LEFT_IN2 = (3, 23)   # fisico 12 - GPIO119 (GPIO3_C7)
-PIN_LEFT_PWM_CHIP = 2    # pwmchip2 (fe700030.pwm) = PWM15, fisico 7
-PIN_LEFT_PWM_LINE = 0
+# Motores de traccion (3x TB6612FNG, 1 motor por canal, 2 motores por
+# placa - izq/der). Rediseño 18-sept: cada placa tiene su PROPIO par
+# IN1/IN2 (nada de empalmar 3 cables en 1 pin) - la Orange Pi tiene GPIO
+# de sobra, esto no es un bus que necesite compartirse. Confirmado libre
+# contra `gpio readall` corrido en la propia placa (no adivinado) el
+# 18-sept: pines 8/10 estan en ALT1 (UART2), 19/21/23/27/28 reservados
+# para spi3-m0/i2c3-m0 - se evitaron.
+#
+# El PWM de velocidad SI se movio del PWM nativo de la Pi (que solo tiene
+# 2 canales de hardware reales, pines 7/32 - por eso antes se compartia)
+# a 6 canales libres del PCA9685 (ch10-15, ver servos.set_motor_pwm) - eso
+# tambien saca el PWM del problema de "no hay pines de sobra" y de paso
+# deja standby=0 completo. Cambio de arquitectura del 18-sept: TODAS las
+# senales de motor son ahora dedicadas por placa, cero empalmes de senal.
+# Unicas excepciones (junction real, no splice de cable pelado): VCC
+# logica de las 3 placas al pin 17 (3.3V, mA, igual que cualquier riel de
+# alimentacion) y STBY compartido al pin 16 (enable/disable, no es una
+# senal que necesite timing independiente por placa).
+#
+# GPIO como (chip, linea) para libgpiod: chip = gpio_global // 32,
+# linea = gpio_global % 32. Listas en orden [placa1, placa2, placa3].
+PIN_MOTOR_VCC_LOGIC_HEADER = 17  # 3.3V - NO es el mismo pin que el VCC del PCA9685 (ese sigue en pin 1)
 
-# Lado derecho
-PIN_RIGHT_IN1 = (4, 0)   # fisico 13 - GPIO128 (GPIO4_A0)
-PIN_RIGHT_IN2 = (4, 2)   # fisico 15 - GPIO130 (GPIO4_B... vecino, ver tabla)
-PIN_RIGHT_PWM_CHIP = 1   # pwmchip1 (fe6f0030.pwm) = PWM11, fisico 32
-PIN_RIGHT_PWM_LINE = 0
+PINS_LEFT_IN1 = [(3, 22), (4, 7), (4, 5)]    # fisico 11 / 26 / 29
+PINS_LEFT_IN2 = [(3, 23), (3, 28), (3, 31)]  # fisico 12 / 31 / 33
+CH_MOTOR_PWM_L = [10, 11, 12]                # PCA9685, 1 canal por placa (izq)
 
-# Standby compartido por los 3 TB6612FNG - permite cortar motores por
-# hardware ademas de por software (capa extra del failsafe).
+PINS_RIGHT_IN1 = [(4, 0), (3, 24), (3, 29)]  # fisico 13 / 35 / 36
+PINS_RIGHT_IN2 = [(4, 2), (3, 27), (3, 26)]  # fisico 15 / 37 / 38
+CH_MOTOR_PWM_R = [13, 14, 15]                # PCA9685, 1 canal por placa (der)
+
+# Standby compartido por los 3 TB6612FNG (junction, ver nota arriba) -
+# permite cortar motores por hardware ademas de por software (capa extra
+# del failsafe).
 PIN_MOTOR_STBY = (4, 3)  # fisico 16 - GPIO131 (GPIO4_A3)
 
-PWM_FREQUENCY_HZ = 1000  # frecuencia tipica para TB6612FNG (100Hz-100kHz OK)
+# Pin libre de sobra en el header tras este cableado, por si hace falta
+# un boton de parada de emergencia o un LED de estado mas adelante.
+PIN_SPARE_GPIO = (3, 25)  # fisico 40 - GPIO121
 
 # Velocidad: multiplica el duty cycle maximo de traccion (0.0 - 1.0)
 SPEED_LEVELS = {0: 0.45, 1: 0.65, 2: 1.0}  # lenta / media / rapida

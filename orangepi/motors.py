@@ -1,16 +1,17 @@
 """
-Control de traccion diferencial: 6 motores N20 (3 izq + 3 der en paralelo
-por cableado, no por driver - ver guia de conexion en CLAUDE.md), 3x
+Control de traccion diferencial: 6 motores N20 (3 izq + 3 der), 3x
 TB6612FNG, 1 motor por canal.
 
-Direccion (IN1/IN2) via libgpiod (python3-libgpiod, API v1). Velocidad via
-PWM real de hardware por sysfs (/sys/class/pwm/...), porque Adafruit Blinka
-no tiene pwmio confirmado para esta placa - sysfs es lo que el propio
-manual de Orange Pi usa y ya confirmamos que funciona.
+Rediseño 18-sept: cada placa tiene su PROPIO par IN1/IN2 (libgpiod, 3
+lineas espejadas por señal en vez de empalmar 1 cable en 3) y su PROPIO
+canal PWM - pero el PWM ya no es el de hardware de la Pi (solo 2 reales
+en todo el header), se movio a 6 canales libres del PCA9685 (ver
+servos.set_motor_pwm) - por eso MotorController ahora necesita la
+instancia de ServoController (comparten el mismo PCA9685/bus I2C, no
+tiene sentido abrir una conexion aparte). Direccion sigue siendo GPIO
+puro via libgpiod (python3-libgpiod, API v1) - eso no cambio.
 """
 import logging
-import subprocess
-import time
 
 try:
     import gpiod
@@ -22,53 +23,6 @@ except ImportError:
 import config
 
 log = logging.getLogger("percy.motors")
-
-PWM_SYSFS_BASE = "/sys/class/pwm/pwmchip{chip}"
-
-
-class _SysfsPWM:
-    """Un canal de PWM real via sysfs (pwmchipN/pwm0)."""
-
-    def __init__(self, chip: int, line: int, frequency_hz: int):
-        self._base = f"{PWM_SYSFS_BASE.format(chip=chip)}/pwm{line}"
-        self._period_ns = int(1e9 / frequency_hz)
-        chip_path = PWM_SYSFS_BASE.format(chip=chip)
-
-        if not self._exists(self._base):
-            with open(f"{chip_path}/export", "w") as f:
-                f.write(str(line))
-            time.sleep(0.1)  # el kernel tarda un poco en crear los nodos
-            # El export de PWM por sysfs no dispara un evento udev real
-            # (limitacion conocida de esta interfaz) - el udev rule normal
-            # no alcanza a los archivos period/duty_cycle/enable recien
-            # creados, asi que los des-bloqueamos con un helper de sudo
-            # bien acotado (ver /etc/sudoers.d/percy-pwm).
-            subprocess.run(
-                ["sudo", "-n", "/usr/local/bin/percy-fix-pwm-perms.sh", self._base],
-                check=False,
-            )
-
-        self._write("period", self._period_ns)
-        self._write("duty_cycle", 0)
-        self._write("enable", 1)
-
-    @staticmethod
-    def _exists(path: str) -> bool:
-        import os
-        return os.path.isdir(path)
-
-    def _write(self, prop: str, value):
-        with open(f"{self._base}/{prop}", "w") as f:
-            f.write(str(value))
-
-    def set_duty(self, fraction: float):
-        """fraction 0.0-1.0"""
-        fraction = max(0.0, min(1.0, fraction))
-        duty_ns = int(self._period_ns * fraction)
-        self._write("duty_cycle", duty_ns)
-
-    def off(self):
-        self._write("duty_cycle", 0)
 
 
 class _GpioOut:
@@ -87,8 +41,29 @@ class _GpioOut:
         self._line.set_value(1 if value else 0)
 
 
+class _MirroredGpioOut:
+    """N lineas GPIO (una por placa TB6612FNG) que siempre reciben el mismo
+    valor a la vez - reemplaza al empalme fisico de cable: en vez de 1 pin
+    de la Pi repartido en 3 placas, son 3 pines distintos que el software
+    escribe juntos."""
+
+    def __init__(self, pins: list, consumer_prefix: str):
+        self._lines = [
+            _GpioOut(chip, line, consumer=f"{consumer_prefix}{i}")
+            for i, (chip, line) in enumerate(pins)
+        ]
+
+    def set(self, value: int):
+        for line in self._lines:
+            line.set(value)
+
+
 class MotorController:
-    def __init__(self):
+    def __init__(self, servos):
+        """servos: instancia ya creada de ServoController (main.py la crea
+        primero) - se reusa su conexion al PCA9685 para el PWM de motor,
+        ver servos.set_motor_pwm."""
+        self._servos = servos
         self.simulated = False
         if not _HARDWARE_LIBS_OK:
             log.warning(
@@ -100,14 +75,11 @@ class MotorController:
             self._enabled = False
             return
         try:
-            self._left_in1 = _GpioOut(*config.PIN_LEFT_IN1, consumer="percy-left-in1")
-            self._left_in2 = _GpioOut(*config.PIN_LEFT_IN2, consumer="percy-left-in2")
-            self._right_in1 = _GpioOut(*config.PIN_RIGHT_IN1, consumer="percy-right-in1")
-            self._right_in2 = _GpioOut(*config.PIN_RIGHT_IN2, consumer="percy-right-in2")
+            self._left_in1 = _MirroredGpioOut(config.PINS_LEFT_IN1, "percy-left-in1-")
+            self._left_in2 = _MirroredGpioOut(config.PINS_LEFT_IN2, "percy-left-in2-")
+            self._right_in1 = _MirroredGpioOut(config.PINS_RIGHT_IN1, "percy-right-in1-")
+            self._right_in2 = _MirroredGpioOut(config.PINS_RIGHT_IN2, "percy-right-in2-")
             self._stby = _GpioOut(*config.PIN_MOTOR_STBY, consumer="percy-stby", default_val=1)
-
-            self._left_pwm = _SysfsPWM(config.PIN_LEFT_PWM_CHIP, config.PIN_LEFT_PWM_LINE, config.PWM_FREQUENCY_HZ)
-            self._right_pwm = _SysfsPWM(config.PIN_RIGHT_PWM_CHIP, config.PIN_RIGHT_PWM_LINE, config.PWM_FREQUENCY_HZ)
 
             self._enabled = True
             self.stop()
@@ -115,7 +87,7 @@ class MotorController:
             self.simulated = True
             self._enabled = False
             log.warning(
-                "No se pudo inicializar GPIO/PWM de motores (%s) - modo "
+                "No se pudo inicializar GPIO de motores (%s) - modo "
                 "SIMULADO: no se mueve ningun motor real.", exc,
             )
 
@@ -130,12 +102,12 @@ class MotorController:
         el PWM en 0, para no depender solo de que el driver respete PWM=0."""
         if self.simulated:
             return
-        self._left_pwm.off()
-        self._right_pwm.off()
+        for ch in config.CH_MOTOR_PWM_L + config.CH_MOTOR_PWM_R:
+            self._servos.set_motor_pwm(ch, 0.0)
         self._stby.set(0)
         self._enabled = False
 
-    def _set_side(self, in1: _GpioOut, in2: _GpioOut, pwm: _SysfsPWM, value: float):
+    def _set_side(self, in1: _MirroredGpioOut, in2: _MirroredGpioOut, pwm_channels: list, value: float):
         if self.simulated:
             return
         value = max(-1.0, min(1.0, value))
@@ -148,7 +120,8 @@ class MotorController:
         else:
             in1.set(0)
             in2.set(0)
-        pwm.set_duty(abs(value))
+        for ch in pwm_channels:
+            self._servos.set_motor_pwm(ch, abs(value))
 
     def set_motors(self, left: float, right: float, speed_level: int = 1):
         """left/right en -1.0..1.0 (ya calculados en el cliente con la
@@ -158,14 +131,14 @@ class MotorController:
         if not self._enabled:
             self.enable()
         max_duty = config.SPEED_LEVELS.get(speed_level, config.SPEED_LEVELS[1])
-        self._set_side(self._left_in1, self._left_in2, self._left_pwm, left * max_duty)
-        self._set_side(self._right_in1, self._right_in2, self._right_pwm, right * max_duty)
+        self._set_side(self._left_in1, self._left_in2, config.CH_MOTOR_PWM_L, left * max_duty)
+        self._set_side(self._right_in1, self._right_in2, config.CH_MOTOR_PWM_R, right * max_duty)
 
     def stop(self):
         if self.simulated:
             return
-        self._set_side(self._left_in1, self._left_in2, self._left_pwm, 0)
-        self._set_side(self._right_in1, self._right_in2, self._right_pwm, 0)
+        self._set_side(self._left_in1, self._left_in2, config.CH_MOTOR_PWM_L, 0)
+        self._set_side(self._right_in1, self._right_in2, config.CH_MOTOR_PWM_R, 0)
 
     def failsafe_stop(self):
         log.warning("FAILSAFE: cortando motores")

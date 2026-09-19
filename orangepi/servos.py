@@ -135,6 +135,38 @@ class ServoController:
         angle = (pulse_us - config.SERVO_MIN_PULSE_US) / (config.SERVO_MAX_PULSE_US - config.SERVO_MIN_PULSE_US) * config.SERVO_ACTUATION_RANGE
         return max(0, min(config.SERVO_ACTUATION_RANGE, angle))
 
+    def set_motor_pwm(self, channel: int, fraction: float):
+        """Duty cycle CRUDO (0.0-1.0, no angulo) para un canal del PCA9685
+        usado como PWM de velocidad de un TB6612FNG (18-sept: los 6 PWM de
+        motor se movieron aca porque la Pi solo tiene 2 canales de PWM de
+        hardware reales, ver config.py). Se escribe el registro directo por
+        el mismo motivo que _read_hardware_angle: la propiedad
+        adafruit_pca9685.duty_cycle tira 'TypeError: memoryview...' en esta
+        combinacion de SO/version - no se puede usar la API normal.
+        Frecuencia = self._pca.frequency (50Hz, fija para los 16 canales a
+        la vez, ya la usan los servos) - mas baja de lo ideal para un motor
+        DC (1-20kHz es lo tipico), puede zumbar/vibrar un poco a duty bajo,
+        pero mueve el motor sin hardware extra."""
+        fraction = max(0.0, min(1.0, fraction))
+        if self.simulated:
+            return
+        off_count = 0 if fraction <= 0.0 else max(1, min(4095, round(fraction * 4095)))
+        reg = self._PCA9685_LED0_ON_L + channel * 4
+        try:
+            bus = smbus2.SMBus(config.I2C_BUS_SERVOS)
+            try:
+                bus.write_byte_data(config.PCA9685_ADDRESS, reg, 0)      # ON_L = 0
+                bus.write_byte_data(config.PCA9685_ADDRESS, reg + 1, 0)  # ON_H = 0
+                bus.write_byte_data(config.PCA9685_ADDRESS, reg + 2, off_count & 0xFF)
+                off_h = (off_count >> 8) & 0x0F
+                if fraction <= 0.0:
+                    off_h |= 0x10  # bit "full off" (igual bit que lee _read_hardware_angle)
+                bus.write_byte_data(config.PCA9685_ADDRESS, reg + 3, off_h)
+            finally:
+                bus.close()
+        except Exception as exc:
+            log.warning("No se pudo escribir PWM crudo en canal %d del PCA9685 (%s)", channel, exc)
+
     def get_angle(self, channel: int) -> float:
         if channel in self._angles:
             return self._angles[channel]
@@ -232,11 +264,27 @@ class ServoController:
         self.set_gripper(not self._gripper_closed)
 
     def set_steering(self, lx: float):
-        """lx en -1..1 -> angulo proporcional de las 4 ruedas de esquina."""
+        """lx en -1..1 -> angulo proporcional de las 4 ruedas de esquina,
+        las 4 para el MISMO lado (modo auto/combinado - gira en curva)."""
         delta = max(-1.0, min(1.0, lx)) * config.STEER_MAX_DELTA
         self.set_angle(config.CH_STEER_FL, config.STEER_CENTER["fl"] + delta)
         self.set_angle(config.CH_STEER_FR, config.STEER_CENTER["fr"] + delta)
         self.set_angle(config.CH_STEER_RL, config.STEER_CENTER["rl"] + delta)
+        self.set_angle(config.CH_STEER_RR, config.STEER_CENTER["rr"] + delta)
+
+    def set_pivot_steering(self, lx: float):
+        """lx en -1..1 -> angulo proporcional EN DIAGONAL (patron de rombo,
+        cada rueda apuntando hacia el centro del rover) - para el modo
+        tanque de verdad, pivote sin arrastre lateral (18-sept). FL/RR
+        giran para un lado, FR/RL para el otro - geometria confirmada con
+        el diagrama de montaje original y las medidas reales del chasis
+        (ver config.PIVOT_STEER_DELTA). Con lx=0 las ruedas quedan derechas
+        (avanzar/retroceder normal); el angulo crece a medida que se
+        empuja el joystick para el costado, hasta el maximo del pivote."""
+        delta = max(-1.0, min(1.0, lx)) * config.PIVOT_STEER_DELTA
+        self.set_angle(config.CH_STEER_FL, config.STEER_CENTER["fl"] + delta)
+        self.set_angle(config.CH_STEER_FR, config.STEER_CENTER["fr"] - delta)
+        self.set_angle(config.CH_STEER_RL, config.STEER_CENTER["rl"] - delta)
         self.set_angle(config.CH_STEER_RR, config.STEER_CENTER["rr"] + delta)
 
     def deposit_macro(self):
