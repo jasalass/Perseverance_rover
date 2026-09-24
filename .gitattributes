@@ -1,0 +1,5 @@
+# Scripts que corren en la Orange Pi (Linux): siempre con saltos de linea LF,
+# si no el shebang/`sh` fallan al copiarlos desde Windows.
+orangepi/wifi/* text eol=lf
+*.sh text eol=lf
+*.service text eol=lf

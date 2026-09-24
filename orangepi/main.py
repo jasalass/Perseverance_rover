@@ -14,7 +14,7 @@ import logging
 import math
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -505,6 +505,99 @@ async def debug_preset_save(name: str):
     actual del brazo como preset sin pasar por el dashboard."""
     presets.save_current(name)
     return {"names": presets.list_names()}
+
+
+# --- WiFi (24-sept) -----------------------------------------------------------
+# Todo pasa por /usr/local/bin/percy-wifi (ver orangepi/wifi/), que corre como
+# root via una regla sudo acotada a ese unico script. Las acciones que
+# cambian de red cortan la conexion del propio celular que las pidio, asi
+# que se responde primero y se ejecutan ~1.5s despues.
+_WIFI_HELPER = ["sudo", "-n", "/usr/local/bin/percy-wifi"]
+
+
+async def _wifi(*args, timeout=90):
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *_WIFI_HELPER, *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        return json.loads(out.decode() or "null") or {"ok": False, "msg": err.decode().strip()}
+    except (FileNotFoundError, json.JSONDecodeError, asyncio.TimeoutError) as exc:
+        return {"ok": False, "msg": f"percy-wifi no disponible ({exc.__class__.__name__})"}
+
+
+async def _wifi_later(*args):
+    await asyncio.sleep(1.5)
+    log.info("wifi %s -> %s", args[0], await _wifi(*args))
+
+
+async def _wifi_body(request: Request):
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    return str(data.get("ssid") or "").strip(), str(data.get("password") or "")
+
+
+@app.get("/wifi/status")
+async def wifi_status():
+    return await _wifi("status")
+
+
+@app.get("/wifi/scan")
+async def wifi_scan():
+    return await _wifi("scan")
+
+
+@app.get("/wifi/saved")
+async def wifi_saved():
+    return await _wifi("saved")
+
+
+@app.post("/wifi/save")
+async def wifi_save(request: Request):
+    ssid, password = await _wifi_body(request)
+    return await _wifi("save", ssid, password)
+
+
+@app.post("/wifi/forget")
+async def wifi_forget(request: Request):
+    ssid, _ = await _wifi_body(request)
+    return await _wifi("forget", ssid)
+
+
+@app.post("/wifi/connect")
+async def wifi_connect(request: Request):
+    ssid, password = await _wifi_body(request)
+    if not ssid:
+        return {"ok": False, "msg": "falta el nombre de la red"}
+    if password and not 8 <= len(password) <= 63:
+        return {"ok": False, "msg": "la clave debe tener entre 8 y 63 caracteres"}
+    asyncio.create_task(_wifi_later("connect", ssid, password))
+    return {"ok": True, "msg": f"cambiando a '{ssid}'"}
+
+
+@app.post("/wifi/disconnect")
+async def wifi_disconnect():
+    asyncio.create_task(_wifi_later("disconnect"))
+    return {"ok": True, "msg": "desconectando; en ~1 minuto se activa la red propia"}
+
+
+@app.post("/wifi/ap")
+async def wifi_ap_on(request: Request):
+    ssid, password = await _wifi_body(request)
+    if ssid and not 8 <= len(password) <= 63:
+        return {"ok": False, "msg": "la clave de la red propia debe tener entre 8 y 63 caracteres"}
+    args = ("ap-up", ssid, password) if ssid else ("ap-up",)
+    asyncio.create_task(_wifi_later(*args))
+    return {"ok": True, "msg": "activando la red propia"}
+
+
+@app.post("/wifi/ap/off")
+async def wifi_ap_off():
+    asyncio.create_task(_wifi_later("ap-down"))
+    return {"ok": True, "msg": "apagando la red propia; buscando redes guardadas"}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

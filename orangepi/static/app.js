@@ -428,19 +428,194 @@
     });
   }
 
-  recLockBtn.addEventListener("click", () => {
-    if (recArmed) {
-      // ya destrabado: el boton candado solo abre/cierra el panel
-      recWidget.classList.toggle("panel-open");
+  // El mismo PIN destraba posiciones y WiFi (los dos son menus de "taller",
+  // no de mision). Abrir uno cierra el otro para no taparse.
+  const wifiWidget = document.getElementById("wifi-widget");
+
+  function unlockMenus() {
+    if (recArmed) return true;
+    const pin = window.prompt("PIN:");
+    if (pin !== REC_PIN) return false;
+    recArmed = true;
+    recWidget.classList.add("armed");
+    wifiWidget.classList.add("armed");
+    fetchPresets();
+    return true;
+  }
+
+  function toggleMenu(widget, other) {
+    const wasArmed = recArmed;
+    if (!unlockMenus()) return false;
+    other.classList.remove("panel-open");
+    if (wasArmed) widget.classList.toggle("panel-open");
+    else widget.classList.add("panel-open");
+    return widget.classList.contains("panel-open");
+  }
+
+  recLockBtn.addEventListener("click", () => { toggleMenu(recWidget, wifiWidget); });
+
+  // --- WiFi ----------------------------------------------------------------
+  // Todo lo hace la Pi con /usr/local/bin/percy-wifi (ver orangepi/wifi/).
+  // Cambiar de red corta ESTA conexion (el celular esta en la red vieja):
+  // por eso cada accion avisa a que red conectarse despues. Si una conexion
+  // falla, la Pi vuelve a la red anterior o crea la red propia sola.
+  const AP_IP = "10.42.0.1";
+  const wifiStatusEl = document.getElementById("wifi-status");
+  const wifiScanListEl = document.getElementById("wifi-scan-list");
+  const wifiSavedListEl = document.getElementById("wifi-saved-list");
+  let wifiNets = [];
+  let wifiSaved = [];
+
+  async function wifiGet(path) {
+    const res = await fetch(path);
+    return res.json();
+  }
+
+  async function wifiPost(path, body) {
+    const res = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+    });
+    return res.json();
+  }
+
+  function wifiNotice(msg) {
+    wifiStatusEl.className = "";
+    wifiStatusEl.innerHTML = escapeHtml(msg);
+  }
+
+  async function refreshWifiStatus() {
+    try {
+      const s = await wifiGet("/wifi/status");
+      if (s && s.ok === false) { wifiNotice(s.msg); return; }
+      wifiStatusEl.className = s.mode;
+      if (s.mode === "client") {
+        wifiStatusEl.innerHTML = `CONECTADO A <b>${escapeHtml(s.ssid)}</b><br><span class="dim">${escapeHtml(s.ip)}:8000</span>`;
+      } else if (s.mode === "ap") {
+        wifiStatusEl.innerHTML = `RED PROPIA <b>${escapeHtml(s.ssid)}</b><br><span class="dim">${AP_IP}:8000</span>`;
+      } else {
+        wifiStatusEl.innerHTML = "SIN RED &mdash; EN ~1 MIN SE CREA LA RED PROPIA";
+      }
+    } catch (e) {
+      // se perdio la conexion (normal justo despues de cambiar de red)
+    }
+  }
+
+  async function refreshWifiSaved() {
+    try {
+      const list = await wifiGet("/wifi/saved");
+      wifiSaved = Array.isArray(list) ? list : [];
+    } catch (e) {
       return;
     }
-    const pin = window.prompt("PIN de posiciones guardadas:");
-    if (pin === REC_PIN) {
-      recArmed = true;
-      recWidget.classList.add("armed", "panel-open");
-      fetchPresets();
+    if (!wifiSaved.length) {
+      wifiSavedListEl.innerHTML = `<span class="wifi-empty">NINGUNA</span>`;
+      return;
+    }
+    wifiSavedListEl.innerHTML = wifiSaved.map((n, i) => `
+      <div class="wifi-item">
+        <button class="wifi-net" data-i="${i}"><span>${escapeHtml(n.ssid)}</span><b>CONECTAR</b></button>
+        <button class="wifi-del" data-i="${i}">&times;</button>
+      </div>`).join("");
+    wifiSavedListEl.querySelectorAll(".wifi-net").forEach((btn) => {
+      btn.addEventListener("click", () => connectWifi(wifiSaved[+btn.dataset.i].ssid, true, true));
+    });
+    wifiSavedListEl.querySelectorAll(".wifi-del").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ssid = wifiSaved[+btn.dataset.i].ssid;
+        if (!window.confirm(`Olvidar la red "${ssid}"? (si es la red actual, la conexión se corta)`)) return;
+        const r = await wifiPost("/wifi/forget", { ssid });
+        wifiNotice(r.msg || "");
+        refreshWifiSaved();
+      });
+    });
+  }
+
+  function renderWifiScan() {
+    if (!wifiNets.length) {
+      wifiScanListEl.innerHTML = `<span class="wifi-empty">NO SE VEN REDES (CON LA RED PROPIA ACTIVA A VECES NO SE PUEDE BUSCAR)</span>`;
+      return;
+    }
+    wifiScanListEl.innerHTML = wifiNets.map((n, i) => `
+      <div class="wifi-item${n.active ? " active" : ""}">
+        <button class="wifi-net" data-i="${i}"><span>${escapeHtml(n.ssid)}</span><b>${n.signal}%${n.secure ? " ·WPA" : ""}${n.saved ? " ·G" : ""}</b></button>
+      </div>`).join("");
+    wifiScanListEl.querySelectorAll(".wifi-net").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const n = wifiNets[+btn.dataset.i];
+        if (n.active) return;
+        connectWifi(n.ssid, n.secure, n.saved);
+      });
+    });
+  }
+
+  async function connectWifi(ssid, secure, saved) {
+    let password = "";
+    if (secure && !saved) {
+      const pw = window.prompt(`Clave de "${ssid}" (se guarda en el rover):`);
+      if (pw === null) return;
+      if (pw.length < 8 || pw.length > 63) { window.alert("La clave debe tener entre 8 y 63 caracteres."); return; }
+      password = pw;
+    }
+    if (!window.confirm(
+      `El rover se cambia a "${ssid}" y esta conexión se corta.\n\n` +
+      `Conecta el celular a "${ssid}" y abre la IP nueva del rover.\n` +
+      `Si no logra conectarse, vuelve a la red anterior o crea su red propia (${AP_IP}).\n\n¿Continuar?`)) return;
+    const r = await wifiPost("/wifi/connect", { ssid, password });
+    wifiNotice(r.msg || "");
+  }
+
+  document.getElementById("wifi-scan").addEventListener("click", async () => {
+    wifiScanListEl.innerHTML = `<span class="wifi-empty">BUSCANDO&hellip;</span>`;
+    try {
+      const list = await wifiGet("/wifi/scan");
+      wifiNets = Array.isArray(list) ? list : [];
+    } catch (e) {
+      wifiNets = [];
+    }
+    renderWifiScan();
+  });
+
+  document.getElementById("wifi-disconnect").addEventListener("click", async () => {
+    if (!window.confirm("El rover se desconecta de la red actual y en ~1 minuto crea su red propia. ¿Continuar?")) return;
+    const r = await wifiPost("/wifi/disconnect");
+    wifiNotice(r.msg || "");
+  });
+
+  document.getElementById("wifi-ap-on").addEventListener("click", async () => {
+    const ssid = window.prompt("Nombre de la red propia (vacío = dejar el actual):", "");
+    if (ssid === null) return;
+    let password = "";
+    if (ssid.trim()) {
+      const pw = window.prompt(`Clave para "${ssid.trim()}" (8 a 63 caracteres):`);
+      if (pw === null) return;
+      if (pw.length < 8 || pw.length > 63) { window.alert("La clave debe tener entre 8 y 63 caracteres."); return; }
+      password = pw;
+    }
+    if (!window.confirm(
+      `El rover crea su red propia y esta conexión se corta.\n\n` +
+      `Conecta el celular a esa red y abre http://${AP_IP}:8000\n\n¿Continuar?`)) return;
+    const r = await wifiPost("/wifi/ap", { ssid: ssid.trim(), password });
+    wifiNotice(r.msg || "");
+  });
+
+  document.getElementById("wifi-ap-off").addEventListener("click", async () => {
+    if (!window.confirm(
+      "Se apaga la red propia y el rover busca tus redes guardadas.\n" +
+      "Si no encuentra ninguna, en ~1 minuto vuelve a crear la red propia. ¿Continuar?")) return;
+    const r = await wifiPost("/wifi/ap/off");
+    wifiNotice(r.msg || "");
+  });
+
+  document.getElementById("btn-wifi").addEventListener("click", () => {
+    if (toggleMenu(wifiWidget, recWidget)) {
+      refreshWifiStatus();
+      refreshWifiSaved();
     }
   });
+
+  setInterval(() => {
+    if (wifiWidget.classList.contains("panel-open")) refreshWifiStatus();
+  }, 4000);
 
   saveBtn.addEventListener("click", () => {
     const name = window.prompt("Nombre de la posición actual (ej. \"bajar garra\"):");

@@ -236,6 +236,28 @@ en el borne en vez de tocar el software.
 Trade-off aceptado: el PWM de motor corre a 50Hz (frecuencia fija del
 PCA9685, compartida con los servos) — puede zumbar un poco a velocidad baja.
 
+## WiFi: redes de la casa + red propia de respaldo (24-sept)
+
+- **En la casa** se conecta solo a las redes guardadas (`Wifi_Mesh-9ABF91B8`, `GLADYS`).
+- **En cualquier otro lugar**, si en ~1 minuto no logra conectarse a ninguna,
+  el servicio `percy-wifi-watchdog` crea la **red propia `PercyRover`**
+  (clave `marte2026`, cambiable) → dashboard en **`http://10.42.0.1:8000`**.
+  No dejar guardadas redes del evento: si la Pi se conecta a una red ajena,
+  hay que averiguar su IP.
+- **Panel WIFI en el dashboard** (ícono al lado de las posiciones, mismo PIN):
+  estado, buscar redes, conectarse (la clave se guarda en la Pi), olvidar,
+  desconectar, y activar/apagar la red propia. Cambiar de red corta la
+  conexión del celular: el panel avisa a qué red pasarse.
+- Si una conexión nueva falla, la Pi vuelve a la red anterior; si tampoco
+  puede, crea la red propia. Nunca queda incomunicada.
+
+Implementación: `orangepi/wifi/percy-wifi` (script sobre `nmcli`, instalado en
+`/usr/local/bin` como root; el backend lo llama con una regla `sudo` acotada a
+ese único script) + `percy-wifi-watchdog.service`. Instalar con
+`sudo sh orangepi/wifi/install.sh`. Las claves quedan solo en la Pi
+(NetworkManager), nunca en este repo; para agregar una red a mano:
+`sudo percy-wifi save "<ssid>" "<clave>"`.
+
 ## HTTPS (necesario para el control por voz, rama `control_voz`)
 
 El microfono del celular (`getUserMedia`) solo funciona en un "contexto
@@ -324,7 +346,6 @@ Respuesta del servidor (eco liviano, una vez por mensaje recibido):
 
 ## Pendiente / no incluido en esta version
 
-- AP WiFi propio del rover — por ahora corre sobre una red WiFi existente.
 - `config.FAILSAFE_ENABLED` en `False` - volver a `True` antes de pista.
 - Garra abrir/cerrar, pose de depósito y pose de traslado sin calibrar.
 - Largos L2/L3 de la IK estimados, no medidos.

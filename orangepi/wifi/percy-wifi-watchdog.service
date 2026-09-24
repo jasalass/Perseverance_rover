@@ -1,0 +1,13 @@
+[Unit]
+Description=Percy WiFi watchdog (red propia si no hay red conocida)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/percy-wifi watchdog
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

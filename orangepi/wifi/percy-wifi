@@ -1,0 +1,280 @@
+#!/usr/bin/python3
+"""
+percy-wifi - manejo del WiFi del rover sobre NetworkManager (nmcli).
+
+Se instala en /usr/local/bin/percy-wifi (root:root, 755) y el backend lo
+llama con `sudo -n` (regla acotada en /etc/sudoers.d/percy-wifi, ver
+install.sh). Nunca pasa por un shell: todos los argumentos viajan como
+lista a nmcli, y SSID/clave se validan antes de usarse.
+
+Flujo pensado para la competencia: en casa se conecta solo a las redes
+guardadas; en cualquier otro lugar, si en ~1 minuto no hay conexion, el
+modo `watchdog` (servicio percy-wifi-watchdog) levanta la red propia.
+
+Uso:
+  percy-wifi status | scan | saved
+  percy-wifi save <ssid> [clave]      guarda sin conectarse
+  percy-wifi connect <ssid> [clave]   guarda y se conecta
+  percy-wifi forget <ssid>
+  percy-wifi disconnect
+  percy-wifi ap-up [ssid clave]       red propia (opcional: cambiar nombre/clave)
+  percy-wifi ap-down
+  percy-wifi watchdog                 bucle del servicio
+"""
+import json
+import subprocess
+import sys
+import time
+
+IFACE = "wlan0"
+AP_CON = "percy-ap"
+AP_DEFAULT_SSID = "PercyRover"
+AP_DEFAULT_PSK = "marte2026"
+WIFI_TYPE = "802-11-wireless"
+
+WATCHDOG_GRACE_S = 30       # al arrancar, dejar que NetworkManager intente las guardadas
+WATCHDOG_DOWN_LIMIT_S = 60  # sin red este tiempo -> red propia
+WATCHDOG_TICK_S = 10
+
+
+def nmcli(*args, timeout=45):
+    r = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout)
+    return r.returncode, r.stdout, r.stderr.strip()
+
+
+def split_terse(line):
+    """nmcli -t separa con ':' y escapa ':' y '\\' con backslash."""
+    fields, cur, esc = [], "", False
+    for ch in line:
+        if esc:
+            cur += ch
+            esc = False
+        elif ch == "\\":
+            esc = True
+        elif ch == ":":
+            fields.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    fields.append(cur)
+    return fields
+
+
+def valid_ssid(ssid):
+    return (isinstance(ssid, str) and 0 < len(ssid.encode()) <= 32
+            and "\n" not in ssid and not ssid.startswith("-"))
+
+
+def valid_psk(psk):
+    return psk == "" or (8 <= len(psk) <= 63 and psk.isprintable())
+
+
+def wifi_connections():
+    """[(nombre_conexion, ssid, modo)] de todas las conexiones WiFi guardadas."""
+    _, out, _ = nmcli("-t", "-f", "NAME,TYPE", "con", "show")
+    result = []
+    for line in out.splitlines():
+        f = split_terse(line)
+        if len(f) >= 2 and f[1] == WIFI_TYPE:
+            name = f[0]
+            _, ssid, _ = nmcli("-g", "802-11-wireless.ssid", "con", "show", "id", name)
+            _, mode, _ = nmcli("-g", "802-11-wireless.mode", "con", "show", "id", name)
+            result.append((name, ssid.strip(), mode.strip() or "infrastructure"))
+    return result
+
+
+def find_client_con(ssid):
+    for name, s, mode in wifi_connections():
+        if s == ssid and mode != "ap":
+            return name
+    return None
+
+
+def status():
+    _, out, _ = nmcli("-t", "-f", "GENERAL.STATE,GENERAL.CONNECTION", "dev", "show", IFACE)
+    state, con = "", ""
+    for line in out.splitlines():
+        f = split_terse(line)
+        if f[0] == "GENERAL.STATE":
+            state = f[1] if len(f) > 1 else ""
+        elif f[0] == "GENERAL.CONNECTION":
+            con = f[1] if len(f) > 1 else ""
+    connected = state.startswith("100")
+    _, ip, _ = nmcli("-g", "IP4.ADDRESS", "dev", "show", IFACE)
+    ip = ip.strip().split("|")[0].split("/")[0]
+    if connected and con == AP_CON:
+        _, ssid, _ = nmcli("-g", "802-11-wireless.ssid", "con", "show", "id", AP_CON)
+        return {"mode": "ap", "ssid": ssid.strip(), "ip": ip}
+    if connected and con:
+        _, ssid, _ = nmcli("-g", "802-11-wireless.ssid", "con", "show", "id", con)
+        return {"mode": "client", "ssid": ssid.strip() or con, "ip": ip}
+    return {"mode": "none", "ssid": "", "ip": "", "state": state}
+
+
+def scan():
+    nmcli("dev", "wifi", "rescan", "ifname", IFACE, timeout=20)
+    time.sleep(2)
+    _, out, _ = nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "ifname", IFACE)
+    saved = {s for _, s, m in wifi_connections() if m != "ap"}
+    best = {}
+    for line in out.splitlines():
+        f = split_terse(line)
+        if len(f) < 4 or not f[1]:
+            continue
+        ssid, signal = f[1], int(f[2] or 0)
+        if ssid not in best or signal > best[ssid]["signal"]:
+            best[ssid] = {
+                "ssid": ssid, "signal": signal, "secure": f[3] not in ("", "--"),
+                "active": f[0] == "*", "saved": ssid in saved,
+            }
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
+def saved():
+    return [{"ssid": s, "name": n} for n, s, m in wifi_connections() if m != "ap"]
+
+
+def _write_profile(ssid, psk):
+    """Crea o actualiza la conexion guardada de ese SSID. Devuelve (nombre, era_nueva)."""
+    name = find_client_con(ssid)
+    sec = ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk] if psk else []
+    if name:
+        if psk:
+            nmcli("con", "modify", "id", name, *sec)
+        return name, False
+    code, _, err = nmcli("con", "add", "type", "wifi", "ifname", IFACE, "con-name", ssid,
+                         "ssid", ssid, "connection.autoconnect", "yes", *sec)
+    if code != 0:
+        raise RuntimeError(err or "no se pudo guardar la red")
+    return ssid, True
+
+
+def save(ssid, psk=""):
+    _write_profile(ssid, psk)
+    return {"ok": True, "msg": f"red '{ssid}' guardada"}
+
+
+def ensure_ap():
+    names = [n for n, _, _ in wifi_connections()]
+    if AP_CON not in names:
+        nmcli("con", "add", "type", "wifi", "ifname", IFACE, "con-name", AP_CON,
+              "connection.autoconnect", "no", "ssid", AP_DEFAULT_SSID,
+              "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
+              "ipv4.method", "shared",
+              "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.proto", "rsn",
+              "wifi-sec.pairwise", "ccmp", "wifi-sec.psk", AP_DEFAULT_PSK)
+
+
+def ap_up(ssid=None, psk=None):
+    ensure_ap()
+    if ssid:
+        nmcli("con", "modify", "id", AP_CON, "802-11-wireless.ssid", ssid, "wifi-sec.psk", psk)
+    code, _, err = nmcli("--wait", "30", "con", "up", "id", AP_CON)
+    return {"ok": code == 0, "msg": err or "red propia activa"}
+
+
+def ap_down():
+    nmcli("con", "down", "id", AP_CON)
+    nmcli("dev", "set", IFACE, "autoconnect", "yes")
+    nmcli("--wait", "30", "dev", "connect", IFACE)
+    return {"ok": True, "msg": "red propia apagada, buscando redes guardadas"}
+
+
+def connect(ssid, psk=""):
+    before = status()
+    name, is_new = _write_profile(ssid, psk)
+    code, _, err = nmcli("--wait", "35", "con", "up", "id", name)
+    if code == 0:
+        return {"ok": True, "msg": f"conectado a '{ssid}'"}
+    # Fallo (clave mala, red fuera de alcance): no dejar el rover incomunicado.
+    if is_new:
+        nmcli("con", "delete", "id", name)
+    if before["mode"] == "client" and before["ssid"] != ssid:
+        prev = find_client_con(before["ssid"])
+        if prev and nmcli("--wait", "35", "con", "up", "id", prev)[0] == 0:
+            return {"ok": False, "msg": f"no se pudo conectar a '{ssid}' ({err}); se volvio a '{before['ssid']}'"}
+    ap_up()
+    return {"ok": False, "msg": f"no se pudo conectar a '{ssid}' ({err}); se activo la red propia"}
+
+
+def forget(ssid):
+    name = find_client_con(ssid)
+    if not name:
+        return {"ok": False, "msg": "esa red no esta guardada"}
+    nmcli("con", "delete", "id", name)
+    return {"ok": True, "msg": f"red '{ssid}' olvidada"}
+
+
+def disconnect():
+    nmcli("dev", "disconnect", IFACE)
+    return {"ok": True, "msg": "desconectado; en ~1 minuto se activa la red propia"}
+
+
+def watchdog():
+    ensure_ap()
+    nmcli("dev", "set", IFACE, "autoconnect", "yes")
+    time.sleep(WATCHDOG_GRACE_S)
+    down_since = None
+    while True:
+        try:
+            mode = status()["mode"]
+        except Exception:
+            mode = "none"
+        if mode in ("client", "ap"):
+            down_since = None
+        elif down_since is None:
+            down_since = time.monotonic()
+        elif time.monotonic() - down_since >= WATCHDOG_DOWN_LIMIT_S:
+            print("sin red hace %ds -> red propia" % WATCHDOG_DOWN_LIMIT_S, flush=True)
+            try:
+                print(ap_up(), flush=True)
+            except Exception as exc:
+                print("fallo al levantar la red propia: %s" % exc, flush=True)
+            down_since = None
+        time.sleep(WATCHDOG_TICK_S)
+
+
+def main(argv):
+    if not argv:
+        print(__doc__)
+        return 2
+    cmd, args = argv[0], argv[1:]
+    ssid = args[0] if args else None
+    psk = args[1] if len(args) > 1 else ""
+    if cmd in ("save", "connect", "forget", "ap-up") and args:
+        if not valid_ssid(ssid):
+            print(json.dumps({"ok": False, "msg": "nombre de red invalido"}))
+            return 1
+        if cmd != "forget" and not valid_psk(psk):
+            print(json.dumps({"ok": False, "msg": "la clave debe tener entre 8 y 63 caracteres"}))
+            return 1
+    if cmd == "ap-up" and args and not psk:
+        print(json.dumps({"ok": False, "msg": "la red propia necesita clave (8 a 63 caracteres)"}))
+        return 1
+    handlers = {
+        "status": lambda: status(),
+        "scan": lambda: scan(),
+        "saved": lambda: saved(),
+        "save": lambda: save(ssid, psk),
+        "connect": lambda: connect(ssid, psk),
+        "forget": lambda: forget(ssid),
+        "disconnect": lambda: disconnect(),
+        "ap-up": lambda: ap_up(ssid, psk) if args else ap_up(),
+        "ap-down": lambda: ap_down(),
+    }
+    if cmd == "watchdog":
+        watchdog()
+        return 0
+    if cmd not in handlers or (cmd in ("save", "connect", "forget") and not args):
+        print(json.dumps({"ok": False, "msg": "comando invalido"}))
+        return 1
+    try:
+        print(json.dumps(handlers[cmd](), ensure_ascii=False))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "msg": str(exc)}, ensure_ascii=False))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

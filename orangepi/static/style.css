@@ -178,6 +178,46 @@ svg { width: 100%; height: 100%; }
 #preset-list .preset-del:active { background: rgba(255, 84, 104, 0.2); border-color: var(--crit); }
 #rec-widget.moving #btn-rec-lock { color: var(--ok); border-color: var(--ok); animation: blink 1.1s ease-in-out infinite; }
 
+/* --- WiFi: mismo patron discreto que las posiciones (mismo PIN) -------- */
+#wifi-widget { position: relative; flex-shrink: 0; opacity: 0.35; }
+#wifi-widget.armed { opacity: 1; }
+#btn-wifi {
+  width: 26px; height: 26px; padding: 5px;
+  border: 1px solid var(--line); background: rgba(17, 26, 31, 0.55); color: var(--ink-2);
+}
+#wifi-widget.armed #btn-wifi { color: var(--accent); border-color: var(--accent-dim); }
+#wifi-panel {
+  display: none; position: absolute; top: 32px; right: 0; z-index: 3;
+  flex-direction: column; gap: 4px; padding: 6px; width: 62vw; max-width: 290px;
+  max-height: 80vh; overflow-y: auto;
+  background: var(--panel-2); border: 1px solid var(--line); backdrop-filter: blur(5px);
+}
+#wifi-widget.panel-open #wifi-panel { display: flex; }
+#wifi-panel .panel-label { margin: 2px -6px 0; }
+#wifi-panel .panel-label:first-child { margin-top: -6px; }
+#wifi-status { font-size: 10px; letter-spacing: 1px; color: var(--ink-1); padding: 2px; line-height: 1.4; }
+#wifi-status .dim { color: var(--ink-2); }
+#wifi-status.ap { color: var(--warn); }
+#wifi-status.none { color: var(--crit); }
+#wifi-panel button {
+  padding: 6px 8px; border: 1px solid var(--line); background: rgba(17, 26, 31, 0.55);
+  color: var(--ink-2); font-size: 10px; letter-spacing: 1px; white-space: nowrap;
+}
+#wifi-panel button:active { background: rgba(53, 224, 192, 0.2); border-color: var(--accent); color: var(--accent); }
+#wifi-panel button.danger { color: var(--crit); }
+.wifi-row { display: flex; gap: 3px; }
+.wifi-row button { flex: 1; }
+.wifi-list { display: flex; flex-direction: column; gap: 3px; }
+.wifi-empty { font-size: 9px; letter-spacing: 1px; color: var(--ink-2); padding: 3px 2px; }
+.wifi-item { display: flex; gap: 3px; }
+.wifi-item .wifi-net {
+  flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 6px; text-align: left;
+}
+.wifi-item .wifi-net span { overflow: hidden; text-overflow: ellipsis; }
+.wifi-item .wifi-net b { font-weight: 400; color: var(--ink-2); flex-shrink: 0; }
+.wifi-item.active .wifi-net { color: var(--ok); border-color: var(--ok); }
+.wifi-item .wifi-del { flex-shrink: 0; width: 26px; padding: 6px 0; color: var(--crit); }
+
 #angle-readout {
   display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px;
   font-size: 9px; letter-spacing: 0.5px; color: var(--ink-2);

@@ -8,7 +8,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#070a0c">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=20260918b">
+<link rel="stylesheet" href="style.css?v=20260924a">
 </head>
 <body>
   <!-- plantilla de icono, referenciada por <use> - un solo trazo, se reusa
@@ -38,6 +38,10 @@
     </symbol>
     <symbol id="ic-play" viewBox="0 0 24 24">
       <path d="M7 4.5v15l13-7.5-13-7.5Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ic-wifi" viewBox="0 0 24 24">
+      <path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.3a9.5 9.5 0 0 1 13 0M8.6 15.6a5 5 0 0 1 6.8 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="12" cy="19" r="1.6" fill="currentColor"/>
     </symbol>
     <symbol id="ic-mic" viewBox="0 0 24 24">
       <rect x="9" y="2" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -70,6 +74,26 @@
     </div>
     <span id="conn-status" class="disconnected"><i class="dot"></i><span id="conn-label">SIN&nbsp;SE&Ntilde;AL</span></span>
     <button id="btn-fullscreen" title="Pantalla completa"><svg><use href="#ic-expand"/></svg></button>
+    <div id="wifi-widget">
+      <button id="btn-wifi" title="WiFi"><svg><use href="#ic-wifi"/></svg></button>
+      <div id="wifi-panel">
+        <span class="panel-label">WIFI</span>
+        <div id="wifi-status">&mdash;</div>
+        <div class="wifi-row">
+          <button id="wifi-scan">BUSCAR REDES</button>
+          <button id="wifi-disconnect" class="danger">DESCONECTAR</button>
+        </div>
+        <span class="panel-label">REDES VISIBLES</span>
+        <div id="wifi-scan-list" class="wifi-list"><span class="wifi-empty">TOCA &laquo;BUSCAR REDES&raquo;</span></div>
+        <span class="panel-label">GUARDADAS</span>
+        <div id="wifi-saved-list" class="wifi-list"></div>
+        <span class="panel-label">RED PROPIA</span>
+        <div class="wifi-row">
+          <button id="wifi-ap-on">ACTIVAR</button>
+          <button id="wifi-ap-off">APAGAR</button>
+        </div>
+      </div>
+    </div>
     <div id="rec-widget">
       <button id="btn-rec-lock" title="Posiciones guardadas"><svg><use href="#ic-rec"/></svg></button>
       <div id="rec-panel">
@@ -130,6 +154,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
-  <script src="app.js?v=20260921a"></script>
+  <script src="app.js?v=20260924a"></script>
 </body>
 </html>
