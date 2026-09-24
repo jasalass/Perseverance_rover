@@ -250,6 +250,14 @@ PCA9685, compartida con los servos) — puede zumbar un poco a velocidad baja.
   conexión del celular: el panel avisa a qué red pasarse.
 - Si una conexión nueva falla, la Pi vuelve a la red anterior; si tampoco
   puede, crea la red propia. Nunca queda incomunicada.
+- **Encontrar el rover en una red nueva** (IP desconocida):
+  - **Aviso ntfy:** cada vez que el rover queda en una red (o cambia de IP)
+    publica su IP en un canal privado de ntfy; tocar la notificación abre
+    el dashboard. Canal generado al azar por `install.sh` en
+    `/etc/percy-wifi-topic` (no está en el repo; se ve en el panel WIFI).
+    Necesita internet en esa red.
+  - **Nombre fijo:** `http://percy.local:8000` (hostname `percy` + avahi).
+    Funciona en PC e iPhone; en Android no siempre.
 
 Implementación: `orangepi/wifi/percy-wifi` (script sobre `nmcli`, instalado en
 `/usr/local/bin` como root; el backend lo llama con una regla `sudo` acotada a

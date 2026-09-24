@@ -22,15 +22,24 @@ Uso:
   percy-wifi watchdog                 bucle del servicio
 """
 import json
+import socket
 import subprocess
 import sys
 import time
+import urllib.request
 
 IFACE = "wlan0"
 AP_CON = "percy-ap"
 AP_DEFAULT_SSID = "PercyRover"
 AP_DEFAULT_PSK = "marte2026"
 WIFI_TYPE = "802-11-wireless"
+
+# Aviso de IP por ntfy (24-sept): en una red nueva no hay forma de saber la
+# IP del rover desde el celular - el watchdog la publica en un canal ntfy
+# privado (nombre al azar, generado por install.sh, NO en el repo). La
+# notificacion abre el dashboard al tocarla. Necesita internet en esa red.
+TOPIC_FILE = "/etc/percy-wifi-topic"
+NTFY_URL = "https://ntfy.sh/"
 
 WATCHDOG_GRACE_S = 30       # al arrancar, dejar que NetworkManager intente las guardadas
 WATCHDOG_DOWN_LIMIT_S = 60  # sin red este tiempo -> red propia
@@ -90,7 +99,36 @@ def find_client_con(ssid):
     return None
 
 
+def topic():
+    try:
+        with open(TOPIC_FILE) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def notify_ip(ssid, ip):
+    """Publica la IP en el canal ntfy. True si salio."""
+    t = topic()
+    if not t:
+        return False
+    url = f"http://{ip}:8000"
+    req = urllib.request.Request(
+        NTFY_URL + t, data=f"Percy en '{ssid}': {url}".encode(),
+        headers={"Title": "Percy en linea", "Click": url, "Tags": "robot"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def status():
+    return {**_status(), "topic": topic(), "hostname": socket.gethostname()}
+
+
+def _status():
     _, out, _ = nmcli("-t", "-f", "GENERAL.STATE,GENERAL.CONNECTION", "dev", "show", IFACE)
     state, con = "", ""
     for line in out.splitlines():
@@ -215,11 +253,18 @@ def watchdog():
     nmcli("dev", "set", IFACE, "autoconnect", "yes")
     time.sleep(WATCHDOG_GRACE_S)
     down_since = None
+    notified = None  # (ssid, ip) ya avisado por ntfy
     while True:
         try:
-            mode = status()["mode"]
+            st = _status()
         except Exception:
-            mode = "none"
+            st = {"mode": "none"}
+        mode = st["mode"]
+        if mode == "client" and st.get("ip") and (st["ssid"], st["ip"]) != notified:
+            # reintenta cada tick hasta que salga (la red puede tardar en tener internet)
+            if notify_ip(st["ssid"], st["ip"]):
+                notified = (st["ssid"], st["ip"])
+                print("aviso ntfy: %s %s" % notified, flush=True)
         if mode in ("client", "ap"):
             down_since = None
         elif down_since is None:

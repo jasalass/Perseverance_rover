@@ -210,6 +210,7 @@ svg { width: 100%; height: 100%; }
 #wifi-status .dim { color: var(--ink-2); }
 #wifi-known { font-size: 9px; letter-spacing: 0.5px; color: var(--ink-2); padding: 0 2px; line-height: 1.5; }
 #wifi-known b { font-weight: 400; color: var(--ink-1); }
+#wifi-known a { color: var(--accent); }
 #wifi-status.ap { color: var(--warn); }
 #wifi-status.none { color: var(--crit); }
 #wifi-panel button {

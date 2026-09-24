@@ -506,11 +506,21 @@
     }
   }
 
-  function renderKnownIps() {
+  function renderKnownIps(s) {
     const rows = Object.entries(loadKnownIps()).map(([ssid, ip]) =>
       `${escapeHtml(ssid)} &rarr; <b>${escapeHtml(ip)}</b>`);
     rows.push(`RED PROPIA &rarr; <b>${AP_IP}</b> (fija)`);
-    wifiKnownEl.innerHTML = `ÚLTIMA IP POR RED:<br>${rows.join("<br>")}`;
+    let html = `ÚLTIMA IP POR RED:<br>${rows.join("<br>")}`;
+    // Como encontrar el rover en una red NUEVA (IP desconocida):
+    if (s && s.topic) {
+      const t = escapeHtml(s.topic);
+      html += `<br><br>AVISO DE IP EN RED NUEVA: app <b>ntfy</b>, suscribirse al canal <b>${t}</b> ` +
+        `(<a href="https://ntfy.sh/${t}" target="_blank" rel="noopener">abrir</a>)`;
+    }
+    if (s && s.hostname) {
+      html += `<br>O ABRIR: <b>http://${escapeHtml(s.hostname)}.local:8000</b> (PC/iPhone)`;
+    }
+    wifiKnownEl.innerHTML = html;
   }
 
   function applyRoverIp(s) {
@@ -541,7 +551,7 @@
     try {
       const s = await wifiGet("/wifi/status");
       applyRoverIp(s);
-      renderKnownIps();
+      renderKnownIps(s);
       if (s && s.ok === false) { wifiNotice(s.msg); return; }
       wifiStatusEl.className = s.mode;
       if (s.mode === "client") {
@@ -614,7 +624,8 @@
     }
     if (!window.confirm(
       `El rover se cambia a "${ssid}" y esta conexión se corta.\n\n` +
-      `Conecta el celular a "${ssid}" y abre la IP nueva del rover.\n` +
+      `Conecta el celular a "${ssid}". La IP nueva te llega como aviso en la app ntfy ` +
+      `(tócalo y abre el dashboard), o prueba http://percy.local:8000.\n` +
       `Si no logra conectarse, vuelve a la red anterior o crea su red propia (${AP_IP}).\n\n¿Continuar?`)) return;
     const r = await wifiPost("/wifi/connect", { ssid, password });
     wifiNotice(r.msg || "");
