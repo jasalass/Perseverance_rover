@@ -18,6 +18,17 @@ pip3 install --user -r requirements.txt   # ver nota en requirements.txt:
 ```
 
 Dashboard en `http://<ip-orange-pi>:8000/` desde el celular (misma red WiFi).
+Al 24-sept la Pi está en `192.168.1.46` (la IP la asigna el router por DHCP
+y ya cambió varias veces: .41, .14, .13, 60.100 — si no responde, buscarla
+por el puerto 8000).
+
+**Reglas operativas aprendidas a la mala:**
+- **Un solo dashboard abierto a la vez.** Cada uno manda su estado 20 veces
+  por segundo; dos conectados se pisan (el que está quieto manda "parar").
+- **Después de copiar archivos, `sync`**, y apagar con `sudo poweroff`, no
+  cortando la energía: la SD escribe con retraso y un corte pierde los
+  cambios recientes (pasó el 24-sept con `config.py`).
+- **Cablear siempre con las dos baterías desconectadas.**
 
 ### Arranque automático (systemd) — instalado 14-sept
 
@@ -41,9 +52,9 @@ compitiendo por el puerto 8000 con el que ya administra systemd).
 
 ```
 Celular (navegador) --WebSocket /ws--> FastAPI (main.py)
-                                          |-- I2C --> PCA9685 --> 10 servos
-                                          |                       (brazo x4 + gripper + steering x4)
-                                          '-- GPIO --> 3x TB6612FNG --> 6 motores N20
+                                          |-- I2C --> PCA9685 --> 10 servos + PWM de motores (ch10-15)
+                                          |                       (brazo x4, giro garra, garra, steering x4)
+                                          '-- GPIO --> 2x TB6612FNG --> 6 motores N20 (en paralelo por lado)
 ```
 
 El dashboard manda ~20 mensajes/seg por WebSocket con el estado completo
@@ -57,7 +68,14 @@ cada mensaje a servos/motores; el servidor responde con un eco liviano
 |---|---|---|
 | `combinado` (default) | Las 4 ruedas de esquina giran proporcional a `lx` **y** además hay diferencial de velocidad entre lados con el mismo `lx` | Uso general, un poco de las dos ventajas |
 | `vehiculo` | Solo dirigen las ruedas de esquina (los 2 lados a la misma velocidad, como un auto) | Terreno suelto — menos desgaste, pero necesita más espacio para girar |
-| `tanque` | Diferencial entre lados **+** las 4 ruedas en diagonal, patrón de rombo (cada una apuntando al centro del rover, ver `servos.set_pivot_steering`) | Pivote de radio cero de verdad, sin arrastrar las ruedas de costado — el ángulo (52.5°) se calculó de las medidas reales del chasis (18cm trocha, 23.5cm distancia entre ejes) |
+| `tanque` | Diferencial entre lados **+** las 4 ruedas en diagonal, patrón de rombo (ver `servos.set_pivot_steering`) | Pivote de radio cero de verdad, sin arrastrar las ruedas de costado — el ángulo (52.5°) se calculó de las medidas reales del chasis (18cm trocha, 23.5cm distancia entre ejes) |
+
+Corregido 24-sept: en `combinado`/`vehiculo` las ruedas **traseras giran al
+revés que las delanteras** (antes las 4 iban al mismo lado y el rover se
+desplazaba de costado en vez de girar). En `tanque` el rombo es el mismo
+para los dos sentidos de giro (se usa `abs(lx)`; el sentido lo pone el
+diferencial) — antes, hacia un lado, formaba el rombo invertido y las
+ruedas se oponían al giro.
 
 ### Brazo — cinemática inversa de 3 juntas acopladas (rediseño 18-sept)
 
@@ -82,6 +100,29 @@ Dos modos, elegidos con el switch del dashboard (`arm_mode`):
   por separado sin coordinación (vertical → hombro, horizontal → codo,
   botones → inclinación directo). Útil para calibrar o alcanzar
   posiciones que la IK no puede.
+
+Mejoras de la IK del 21-sept: si el punto pedido cabe pero el ángulo de
+acercamiento no (la inclinación tiene rango corto y suele ser la primera en
+tocar tope), **se prioriza la posición de la punta** y se suelta el ángulo
+lo mínimo necesario, en vez de congelar todo el brazo. Además hay una
+**guarda anti-latigazo** (`config.IK_MAX_JOINT_STEP_DEG = 8`): una solución
+que pida mover una junta más de 8° en un solo tick se rechaza.
+
+**Giro de garra** (canal 4, MG90S): eje independiente de la IK (girar la
+garra no mueve la punta), con sus propios botones "GIRO GARRA" en el
+dashboard (`gripper_rotate_dir`). Centro en 90°.
+
+Calibración del brazo rearmado (21-sept, en `config.py`):
+
+| Junta | Cero (horizontal) | Escala/signo | Rango servo |
+|---|---|---|---|
+| Hombro (ch1) | 90° | +1 | 45°–175° |
+| Codo (ch2) | 68° (horn movido 3 dientes) | −1.19 | 10°–175° |
+| Inclinación (ch3) | 30° (horn movido 1 diente) | +1 | 5°–135° |
+| Giro garra (ch4) | 90° = derecha | — | 10°–170° |
+
+Largos: L1 = 120 mm (medido), **L2 = 115 / L3 = 135 mm estimados** (suman
+los 250 mm medidos de codo a punta) — confirmar si la punta no se mueve recta.
 
 **Presets** (`presets.py`): guardan solo el ángulo final de los 5 servos
 del brazo bajo un nombre — no el camino ni el tiempo. Al pedir un preset
@@ -110,7 +151,7 @@ depósito, comandos de voz reconocidos, y en el flanco ascendente de
 `hit_limit` (el brazo empujando contra un límite — pared blanda de la IK
 o tope de articulación en modo LIBRE).
 
-### Control por voz (rama `control_voz`, no mergeada a `main`)
+### Control por voz
 
 Reconocimiento de voz **100% local en el navegador** (Vosk compilado a
 WebAssembly, `vosk-browser`) — el audio nunca sale del celular ni
@@ -138,57 +179,62 @@ HTTP plano, así que el botón de voz falla con "SIN PERMISO DE MIC".
 Falta además copiar el modelo (`model.tar.gz`, ~40MB) a
 `static/voice/` en la Orange Pi.
 
-## Cableado de motores N20 (3x TB6612FNG, confirmado 18-sept)
+## Cableado de motores N20 (estado real al 24-sept)
 
-Rediseño 18-sept: cada placa TB6612FNG tiene su **propio** par IN1/IN2 y
-su propio canal PWM — nada de empalmar un cable en 3. El PWM de
-velocidad ya no usa el PWM de hardware de la Pi (solo 2 canales reales
-en todo el header) — se movió a 6 canales libres del PCA9685
-(`servos.set_motor_pwm`, escritura cruda por registro porque
-`adafruit_pca9685.duty_cycle` tira `TypeError` en esta combinación de
-SO/versión). Pines confirmados contra `gpio readall` corrido en la
-propia placa (no adivinados).
+Cada placa TB6612FNG tiene su **propio** par IN1/IN2 por GPIO dedicado y su
+propio canal PWM en el PCA9685 (`servos.set_motor_pwm`, escritura cruda por
+registro porque `adafruit_pca9685.duty_cycle` tira `TypeError` en esta
+combinación de SO/versión). La Pi solo tiene 2 PWM de hardware reales, por
+eso el PWM de motores va por el PCA9685.
 
-| Señal (nombre en el TB6612FNG) | Placa 1 (delanteras) | Placa 2 (medias) | Placa 3 (traseras) |
-|---|---|---|---|
-| AIN1 (motor izquierdo) | pin 11 | pin 26 | pin 29 |
-| AIN2 (motor izquierdo) | pin 12 | pin 31 | pin 33 |
-| PWMA (motor izquierdo) | PCA9685 ch10 | ch11 | ch12 |
-| BIN1 (motor derecho) | pin 13 | pin 35 | pin 36 |
-| BIN2 (motor derecho) | pin 15 | pin 37 | pin 38 |
-| PWMB (motor derecho) | PCA9685 ch13 | ch14 | ch15 |
-| GND | pin 9 | pin 14 | pin 20 |
+**Cómo quedó el hardware:**
+- **Solo 2 placas.** La placa 3 se dañó (STBY y VCC en corto con GND por
+  dentro, <10 Ω) y se retiró. El canal B de la placa 2 también está dañado
+  (su entrada BIN2 carga la línea: 2.7 V con el cable, 3.2 V sin él); su
+  cable de BIN2 queda desconectado.
+- **Motores cableados cruzados:** canal **A (AO) = motores derechos**,
+  canal **B (BO) = motores izquierdos**. Se corrigió en `config.py` (el
+  lado izquierdo usa los pines del canal B), no se recableó.
+- **Motores en paralelo por lado** (todos los de un lado reciben siempre el
+  mismo comando, así que no se pierde control):
 
-Nodos compartidos (junction real con bloque terminal, no splice de cable
-pelado — son potencia/enable estáticos, no señales que necesiten
-control independiente por placa):
+| Salida | Motores |
+|---|---|
+| Placa 1, BO1/BO2 | izquierdos (delantero, central y trasero) |
+| Placa 1, AO1/AO2 | derecho delantero |
+| Placa 2, AO1/AO2 | derecho central + derecho trasero |
+| Placa 2, canal B | nada (dañado) |
 
-- **STBY** de las 3 placas → pin 16
-- **VCC** lógica de las 3 placas → pin 17 (3.3V — el pin 1 sigue solo
-  para el VCC del PCA9685)
-- **VM** (6V real, con corriente) de las 3 placas → salida del LM2596,
-  en paralelo con el cable que alimenta el PCA9685, **no** encadenado a
-  través de su terminal (esas pistas no están pensadas para la corriente
-  de 6 motores)
+**Señales (pines físicos del header):**
 
-Salidas a motor (directo, 1 a 1, sin empalme — cada placa ya sirve
-exactamente a sus 2 motores):
-
-| Placa | AO1/AO2 → | BO1/BO2 → |
+| Señal | Placa 1 | Placa 2 |
 |---|---|---|
-| 1 | N20 Izq. Delantero | N20 Der. Delantero |
-| 2 | N20 Izq. Medio | N20 Der. Medio |
-| 3 | N20 Izq. Trasero | N20 Der. Trasero |
+| AIN1 / AIN2 (derecha) | 11 / 12 | 26 / 31 |
+| PWMA | PCA9685 ch10 | ch11 |
+| BIN1 / BIN2 (izquierda) | 13 / 15 | 35 / (40, sin conectar) |
+| PWMB | PCA9685 ch13 | ch14 |
+| STBY | pin 16 (puenteado) | pin 16 (puenteado) |
+| VCC lógica | pin 17 (puenteado) | pin 17 (puenteado) |
+| VM | +6V del LM2596 | +6V del LM2596 |
+| GND | tierra de potencia (estrella) | tierra de potencia (estrella) |
 
-Si un motor gira al revés de lo esperado, invertir los 2 cables de esa
-salida (AO1↔AO2) en vez de tocar el software.
+El software sigue manejando las líneas de la placa 3 (29/33/36/38, ch12/15):
+no hay nada conectado ahí y no afecta.
 
-Pin libre de sobra: **40** (GPIO121) — por si hace falta un botón de
-parada de emergencia o un LED de estado.
+**Ojo con la revisión de la Orange Pi:** en la placa de reemplazo (24-sept)
+el **pin físico 26 es GPIO126**; en la original era GPIO135. Si se cambia de
+Orange Pi, correr `gpio readall` y comparar antes de conectar.
 
-Trade-off aceptado: el PWM de motor ahora corre a 50Hz (frecuencia fija
-del PCA9685, compartida con los servos) en vez de los 1kHz que tenía
-antes por sysfs — puede zumbar/vibrar un poco más a velocidad baja.
+**Tierra:** los GND de las placas van a la tierra de potencia (negativo del
+LM2596), no a los pines GND de la Pi. Si se suelta el negativo de los
+motores, no gira ninguno (pasó el 24-sept). Diagrama completo (con 3 placas,
+antes de retirar la tercera) en `docs/diagrama_electrico.html`, local.
+
+Si un motor gira al revés de sus compañeros de lado, invertir sus 2 cables
+en el borne en vez de tocar el software.
+
+Trade-off aceptado: el PWM de motor corre a 50Hz (frecuencia fija del
+PCA9685, compartida con los servos) — puede zumbar un poco a velocidad baja.
 
 ## HTTPS (necesario para el control por voz, rama `control_voz`)
 
@@ -202,8 +248,8 @@ si no existen, main.py arranca en HTTP plano igual (sirve para
 desarrollo local sin voz).
 
 Generar el certificado (**regenerar si cambia la IP de la Orange Pi** -
-el que había era para `192.168.1.41`, la Pi hoy está en `192.168.1.14`
-por WiFi, hay que rehacerlo):
+el que había era para `192.168.1.41`, la Pi hoy está en `192.168.1.46`,
+hay que rehacerlo):
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -nodes -keyout percy.key -out percy.crt -days 825 \
@@ -217,31 +263,28 @@ hacer `pscp`. La primera vez que el celular entra a
 no es privada" (normal con un cert autofirmado) - hay que aceptarlo
 manualmente una vez ("Avanzado" -> "Continuar de todas formas").
 
-## Antes de conectar servos/motores de verdad
+## Calibración y seguridad
 
-Todos los pines/canales estan centralizados en `config.py`. Los del
-brazo IK (`IK_L2_MM`, `IK_L3_MM`, `IK_TILT_SERVO_AT_ZERO`,
-`IK_TILT_SIGN`, `ANGLE_ARM_TILT_MIN/MAX`) son **provisorios** — quedan
-pendientes de recalibrar con el brazo rediseñado (Arm2+3 fusionados,
-MG996R en la inclinación) ya armado. Los ángulos de servo (`ANGLE_*`,
-`DEPOSIT_*`, `STEER_CENTER`) también hay que confirmarlos con el brazo y
-las ruedas ya armadas — el steering de las 4 esquinas ya está calibrado
-(`STEER_CENTER = {"fl":85,"fr":90,"rl":85,"rr":95}`).
+Todos los pines/canales/ángulos están en `config.py`. Brazo recalibrado el
+21-sept (tabla en la sección del brazo). Steering de las 4 esquinas
+calibrado (`STEER_CENTER = {"fl":85,"fr":90,"rl":85,"rr":95}`). Sin
+calibrar todavía: garra abrir/cerrar, pose de depósito (`DEPOSIT_*`) y pose
+de traslado.
 
-**`config.FAILSAFE_ENABLED = False` hoy, a propósito, para poder
-calibrar por curl/SSH sin el dashboard abierto** — volver a poner en
-`True` antes de cualquier prueba en pista o competencia.
+**`config.FAILSAFE_ENABLED = False` hoy, a propósito, para poder calibrar
+por curl/SSH sin el dashboard abierto** — volver a poner en `True` antes de
+cualquier prueba en pista o competencia.
 
 ## Estructura
 
 - `config.py` - todos los pines/canales/angulos en un solo lugar.
-- `servos.py` - PCA9685: 9 servos (brazo x4 + gripper + steering x4) por
+- `servos.py` - PCA9685: 10 servos (brazo x4, giro garra, garra, steering x4) por
   ángulo, más `set_motor_pwm` (PWM crudo de motor, ch10-15).
 - `kinematics.py` - cinemática inversa del brazo, `solve()` (2 juntas,
   histórico) y `solve3()` (3 juntas acopladas, posición + ángulo de
   acercamiento, la que usa main.py hoy).
 - `presets.py` - guardar/ir a posiciones nombradas del brazo (`presets.json`).
-- `motors.py` - 6 motores N20 via 3x TB6612FNG (GPIO dirección dedicado
+- `motors.py` - 6 motores N20 via 2x TB6612FNG (GPIO dirección dedicado
   por placa + PWM por PCA9685, ver sección de cableado arriba).
 - `camera.py` - stream MJPEG de la camara USB (no rompe nada si no hay camara).
 - `main.py` - FastAPI, WebSocket `/ws`, failsafe, interlock brazo/tracción, sirve `static/`.
@@ -257,7 +300,7 @@ Mensaje del cliente (todos los campos opcionales, default 0/false):
 {
   "lx": -0.8, "ly": 0.6, "speed": 1, "drive_mode": "combinado",
   "arm_mode": "ik", "arm_x_dir": 0, "arm_y_dir": 0, "wrist_dir": 0,
-  "base_dir": 0, "grip": 0, "deposit": 0,
+  "base_dir": 0, "gripper_rotate_dir": 0, "grip": 0, "deposit": 0,
   "preset_save": null, "preset_goto": null, "preset_delete": null
 }
 ```
@@ -281,18 +324,13 @@ Respuesta del servidor (eco liviano, una vez por mensaje recibido):
 
 ## Pendiente / no incluido en esta version
 
-- AP WiFi propio (`hostapd`+`dnsmasq`) - por ahora corre sobre una red
-  WiFi existente ("Veronica").
-- ToF VL53L0X / IMU MPU-9250 (AutoNav) - los pines XSHUT ya estan en
-  `config.py` pero el modulo de sensores no esta escrito todavia.
-- Macro "soltar en bandeja" es bloqueante (no permite mover otra cosa
-  mientras corre) - si hace falta que sea no bloqueante hay que pasarla a
-  una maquina de estados en `main.py`.
-- Control por voz: falta el certificado HTTPS para la IP actual y copiar
-  el modelo a la Pi (ver secciones arriba) - probado offline en PC, no
-  probado todavía en el celular real.
-- Recalibrar constantes de IK (`IK_L2_MM`, `IK_L3_MM`, `IK_TILT_*`,
-  `ANGLE_ARM_TILT_MIN/MAX`) con el brazo rediseñado ya armado.
+- AP WiFi propio del rover — por ahora corre sobre una red WiFi existente.
 - `config.FAILSAFE_ENABLED` en `False` - volver a `True` antes de pista.
-- 6 motores N20: cableado en curso, solo el delantero derecho montado al
-  18-sept (ver tabla de cableado arriba para el resto).
+- Garra abrir/cerrar, pose de depósito y pose de traslado sin calibrar.
+- Largos L2/L3 de la IK estimados, no medidos.
+- Control por voz: falta el certificado HTTPS para la IP actual y copiar
+  el modelo a la Pi - probado offline en PC, no en el celular real.
+- ToF VL53L0X / IMU MPU-9250 (AutoNav) - pines reservados, código no escrito.
+- Macro "soltar en bandeja" es bloqueante.
+- Faltan fusible, interruptor general y condensadores en el rail de 6V.
+- Conseguir TB6612FNG de repuesto (hoy 2 placas, una con un canal dañado).

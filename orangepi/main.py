@@ -57,7 +57,7 @@ _failsafe_tripped = False
 # aplicaba su velocidad instantaneamente -> se sentia brusco/a tirones.
 # Hombro/codo/inclinacion ya NO estan aca (18-sept) - pasaron a control
 # por IK acoplada, ver _ik_target_vel/_ik_current_vel/_ik_pos mas abajo.
-_arm_target = {"base_dir": 0.0}
+_arm_target = {"base_dir": 0.0, "gripper_rotate_dir": 0.0}
 _arm_current = {k: 0.0 for k in _arm_target}
 
 # --- Control del brazo por cinematica inversa (rediseño 18-sept) ------------
@@ -159,6 +159,7 @@ def _apply_command(data: dict):
     # respondiendo a lx normal (SG90, consumo bajo, no es el problema).
     arm_requested = (
         float(data.get("base_dir", 0)) != 0.0
+        or float(data.get("gripper_rotate_dir", 0)) != 0.0
         or float(data.get("arm_x_dir", 0.0)) != 0.0
         or float(data.get("arm_y_dir", 0.0)) != 0.0
         or float(data.get("wrist_dir", 0.0)) != 0.0
@@ -204,6 +205,7 @@ def _apply_command(data: dict):
     # campo del protocolo de siempre (los botones que eran de la muneca) -
     # ahora alimenta phi_dir en vez de mover un canal directo.
     _arm_target["base_dir"] = float(data.get("base_dir", 0))
+    _arm_target["gripper_rotate_dir"] = float(data.get("gripper_rotate_dir", 0))
     _ik_target_vel["x_dir"] = float(data.get("arm_x_dir", 0.0))
     _ik_target_vel["y_dir"] = float(data.get("arm_y_dir", 0.0))
     _ik_target_vel["phi_dir"] = float(data.get("wrist_dir", 0.0))
@@ -246,6 +248,45 @@ def _ramp(current: float, target: float, max_step: float) -> float:
     return current + (max_step if diff > 0 else -max_step)
 
 
+def _ik_feasible(result) -> bool:
+    # +-0.01 de margen: el viaje angulo->xy->angulo no siempre vuelve exacto
+    # (error de punto flotante), sin esto un punto justo en el limite podia
+    # rechazarse por una diferencia de 1e-14 grados (ver bug 16-sept).
+    eps = 0.01
+    if not (
+        result.reachable
+        and (config.ANGLE_ARM_SHOULDER_MIN - eps) <= result.shoulder_angle_raw <= (config.ANGLE_ARM_SHOULDER_MAX + eps)
+        and (config.ANGLE_ARM_ELBOW_MIN - eps) <= result.elbow_angle_raw <= (config.ANGLE_ARM_ELBOW_MAX + eps)
+        and (config.ANGLE_ARM_TILT_MIN - eps) <= result.tilt_angle_raw <= (config.ANGLE_ARM_TILT_MAX + eps)
+    ):
+        return False
+    # Guarda anti-salto (ver config.IK_MAX_JOINT_STEP_DEG): una solucion
+    # valida pero lejos de donde estan los servos es un latigazo, no un paso.
+    limit = config.IK_MAX_JOINT_STEP_DEG
+    return (
+        abs(result.shoulder_angle - servos.get_angle(config.CH_ARM_SHOULDER)) <= limit
+        and abs(result.elbow_angle - servos.get_angle(config.CH_ARM_ELBOW)) <= limit
+        and abs(result.tilt_angle - servos.get_angle(config.CH_ARM_WRIST)) <= limit
+    )
+
+
+def _solve_ik(x: float, y: float, phi: float, relax_phi: bool):
+    """(resultado, phi_usado), o (None, phi) si no hay solucion. Con
+    relax_phi=True, si (x,y,phi) no cabe prueba phi +-2, +-4... (hasta 90)
+    y se queda con el cambio de angulo mas chico que si funcione."""
+    result = kinematics.solve3(x, y, phi, elbow_up=_ik_elbow_up)
+    if _ik_feasible(result):
+        return result, phi
+    if relax_phi:
+        for step in range(2, 91, 2):
+            for sign in (1, -1):
+                candidate = phi + sign * step
+                result = kinematics.solve3(x, y, candidate, elbow_up=_ik_elbow_up)
+                if _ik_feasible(result):
+                    return result, candidate
+    return None, phi
+
+
 async def _arm_easing_loop():
     """Rampea _arm_current/_ik_current_vel hacia sus objetivos a lo sumo
     config.ARM_MAX_ACCEL_PER_TICK por tick, y recien ahi mueve el brazo de
@@ -258,7 +299,10 @@ async def _arm_easing_loop():
         for axis, target in _arm_target.items():
             _arm_current[axis] = _ramp(_arm_current[axis], target, config.ARM_MAX_ACCEL_PER_TICK)
         if any(_arm_current.values()):
-            servos.move_arm(base_dir=_arm_current["base_dir"])
+            servos.move_arm(
+                base_dir=_arm_current["base_dir"],
+                gripper_rotate_dir=_arm_current["gripper_rotate_dir"],
+            )
 
         for axis, target in _ik_target_vel.items():
             _ik_current_vel[axis] = _ramp(_ik_current_vel[axis], target, config.ARM_MAX_ACCEL_PER_TICK)
@@ -321,16 +365,18 @@ async def _arm_easing_loop():
             _ik_pos["y"] += _ik_current_vel["y_dir"] * config.IK_CARTESIAN_SPEED_MM_S * tick_s
             _ik_phi += _ik_current_vel["phi_dir"] * config.IK_PHI_SPEED_DEG_S * tick_s
 
-            result = kinematics.solve3(_ik_pos["x"], _ik_pos["y"], _ik_phi, elbow_up=_ik_elbow_up)
-            # +-0.01 de margen: el viaje angulo->xy->angulo no siempre
-            # vuelve exacto (error de punto flotante), sin esto un punto
-            # justo en el limite podia rechazarse por una diferencia de
-            # 1e-14 grados (ver bug 16-sept).
-            eps = 0.01
-            shoulder_ok = (config.ANGLE_ARM_SHOULDER_MIN - eps) <= result.shoulder_angle_raw <= (config.ANGLE_ARM_SHOULDER_MAX + eps)
-            elbow_ok = (config.ANGLE_ARM_ELBOW_MIN - eps) <= result.elbow_angle_raw <= (config.ANGLE_ARM_ELBOW_MAX + eps)
-            tilt_ok = (config.ANGLE_ARM_TILT_MIN - eps) <= result.tilt_angle_raw <= (config.ANGLE_ARM_TILT_MAX + eps)
-            if result.reachable and shoulder_ok and elbow_ok and tilt_ok:
+            # Posicion de la punta con PRIORIDAD sobre el angulo de
+            # acercamiento (21-sept): si (x,y,phi) no se puede cumplir (la
+            # inclinacion, con su rango real corto, suele ser la primera en
+            # llegar a su tope), se suelta phi lo minimo necesario en vez de
+            # congelar todo - si no, el brazo quedaba trabado desde
+            # cualquier pose donde phi ya estaba al limite. Solo se relaja
+            # mientras se mueve la punta; si el operador esta moviendo phi
+            # con los botones y no cabe, se congela como antes.
+            tip_moving = bool(_ik_current_vel["x_dir"] or _ik_current_vel["y_dir"])
+            result, phi_used = _solve_ik(_ik_pos["x"], _ik_pos["y"], _ik_phi, relax_phi=tip_moving)
+            if result is not None:
+                _ik_phi = phi_used
                 servos.set_angle(config.CH_ARM_SHOULDER, result.shoulder_angle)
                 servos.set_angle(config.CH_ARM_ELBOW, result.elbow_angle)
                 servos.set_angle(config.CH_ARM_WRIST, result.tilt_angle)

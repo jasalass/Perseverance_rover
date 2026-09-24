@@ -10,7 +10,7 @@
 
   const state = {
     lx: 0, ly: 0,
-    base_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, // wrist_dir = angulo de acercamiento (phi) desde el rediseno 18-sept
+    base_dir: 0, gripper_rotate_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, // wrist_dir = angulo de acercamiento (phi) desde el rediseno 18-sept
     grip: 0, deposit: 0,
     preset_save: null, preset_goto: null, preset_delete: null,
     speed: 1,
@@ -265,7 +265,7 @@
       case "alto":
         // corta cualquier movimiento sostenido (joysticks + botones de eje) al toque
         state.lx = 0; state.ly = 0; state.arm_x_dir = 0; state.arm_y_dir = 0;
-        state.base_dir = 0; state.wrist_dir = 0;
+        state.base_dir = 0; state.wrist_dir = 0; state.gripper_rotate_dir = 0;
         vibrate([15, 15, 15, 15, 15]);
         break;
     }

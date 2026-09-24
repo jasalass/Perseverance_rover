@@ -186,6 +186,7 @@ class ServoController:
             config.CH_ARM_SHOULDER: "hombro",
             config.CH_ARM_ELBOW: "codo",
             config.CH_ARM_WRIST: "inclinacion_garra",
+            config.CH_GRIPPER_ROTATE: "giro_garra",
             config.CH_GRIPPER: "gripper",
             config.CH_STEER_FL: "steer_fl",
             config.CH_STEER_FR: "steer_fr",
@@ -197,7 +198,7 @@ class ServoController:
     # Canales del brazo (sin steering) - lo que graba/reproduce presets.py.
     ARM_CHANNELS = (
         config.CH_ARM_BASE, config.CH_ARM_SHOULDER, config.CH_ARM_ELBOW,
-        config.CH_ARM_WRIST, config.CH_GRIPPER,
+        config.CH_ARM_WRIST, config.CH_GRIPPER_ROTATE, config.CH_GRIPPER,
     )
 
     def snapshot_arm_angles(self) -> dict:
@@ -207,8 +208,9 @@ class ServoController:
 
     # --- API de alto nivel usada por main.py -------------------------------
 
-    def move_arm(self, base_dir: float):
-        """-1.0..1.0, velocidad ya rampeada por main.py:_arm_easing_loop,
+    def move_arm(self, base_dir: float, gripper_rotate_dir: float = 0.0):
+        """-1.0..1.0 (base y giro de garra, ambos independientes de la IK),
+        velocidad ya rampeada por main.py:_arm_easing_loop,
         no el valor crudo del joystick/boton - movimiento suave, sin salto
         brusco.
 
@@ -223,6 +225,10 @@ class ServoController:
         move_arm_joint_direct() mas abajo."""
         if base_dir:
             self.set_angle(config.CH_ARM_BASE, self.get_angle(config.CH_ARM_BASE) + base_dir * config.BASE_STEP_DEG_PER_TICK)
+        if gripper_rotate_dir:
+            new = self.get_angle(config.CH_GRIPPER_ROTATE) + gripper_rotate_dir * config.ARM_STEP_DEG_PER_TICK
+            new = max(config.ANGLE_GRIPPER_ROTATE_MIN, min(config.ANGLE_GRIPPER_ROTATE_MAX, new))
+            self.set_angle(config.CH_GRIPPER_ROTATE, new)
 
     def move_arm_joint_direct(self, shoulder_dir: float, elbow_dir: float, tilt_dir: float, step: float = config.ARM_STEP_DEG_PER_TICK) -> bool:
         """Modo 'LIBRE': hombro, codo Y la inclinacion de garra se mueven
@@ -264,13 +270,16 @@ class ServoController:
         self.set_gripper(not self._gripper_closed)
 
     def set_steering(self, lx: float):
-        """lx en -1..1 -> angulo proporcional de las 4 ruedas de esquina,
-        las 4 para el MISMO lado (modo auto/combinado - gira en curva)."""
+        """lx en -1..1 -> angulo proporcional de las 4 ruedas de esquina
+        (modo vehiculo/combinado - gira en curva). Las traseras giran al
+        REVES que las delanteras (24-sept: antes iban las 4 al mismo lado y
+        el rover se desplazaba de costado en vez de girar; los 4 servos
+        estan montados con la misma orientacion)."""
         delta = max(-1.0, min(1.0, lx)) * config.STEER_MAX_DELTA
         self.set_angle(config.CH_STEER_FL, config.STEER_CENTER["fl"] + delta)
         self.set_angle(config.CH_STEER_FR, config.STEER_CENTER["fr"] + delta)
-        self.set_angle(config.CH_STEER_RL, config.STEER_CENTER["rl"] + delta)
-        self.set_angle(config.CH_STEER_RR, config.STEER_CENTER["rr"] + delta)
+        self.set_angle(config.CH_STEER_RL, config.STEER_CENTER["rl"] - delta)
+        self.set_angle(config.CH_STEER_RR, config.STEER_CENTER["rr"] - delta)
 
     def set_pivot_steering(self, lx: float):
         """lx en -1..1 -> angulo proporcional EN DIAGONAL (patron de rombo,
@@ -280,8 +289,13 @@ class ServoController:
         el diagrama de montaje original y las medidas reales del chasis
         (ver config.PIVOT_STEER_DELTA). Con lx=0 las ruedas quedan derechas
         (avanzar/retroceder normal); el angulo crece a medida que se
-        empuja el joystick para el costado, hasta el maximo del pivote."""
-        delta = max(-1.0, min(1.0, lx)) * config.PIVOT_STEER_DELTA
+        empuja el joystick para el costado, hasta el maximo del pivote.
+
+        El rombo es el MISMO para girar a la izquierda o a la derecha (el
+        sentido lo pone el diferencial de los motores) - por eso se usa el
+        valor absoluto de lx (24-sept: con el signo, al girar para un lado
+        las ruedas formaban el rombo invertido y se oponian al giro)."""
+        delta = min(1.0, abs(lx)) * config.PIVOT_STEER_DELTA
         self.set_angle(config.CH_STEER_FL, config.STEER_CENTER["fl"] + delta)
         self.set_angle(config.CH_STEER_FR, config.STEER_CENTER["fr"] - delta)
         self.set_angle(config.CH_STEER_RL, config.STEER_CENTER["rl"] - delta)
