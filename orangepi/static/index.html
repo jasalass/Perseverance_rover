@@ -8,7 +8,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#070a0c">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=20260924a">
+<link rel="stylesheet" href="style.css?v=20260924b">
 </head>
 <body>
   <!-- plantilla de icono, referenciada por <use> - un solo trazo, se reusa
@@ -72,6 +72,7 @@
       <button data-speed="1" class="active">II</button>
       <button data-speed="2">III</button>
     </div>
+    <span id="rover-ip" data-label="ROVER">--</span>
     <span id="conn-status" class="disconnected"><i class="dot"></i><span id="conn-label">SIN&nbsp;SE&Ntilde;AL</span></span>
     <button id="btn-fullscreen" title="Pantalla completa"><svg><use href="#ic-expand"/></svg></button>
     <div id="wifi-widget">
@@ -79,6 +80,7 @@
       <div id="wifi-panel">
         <span class="panel-label">WIFI</span>
         <div id="wifi-status">&mdash;</div>
+        <div id="wifi-known"></div>
         <div class="wifi-row">
           <button id="wifi-scan">BUSCAR REDES</button>
           <button id="wifi-disconnect" class="danger">DESCONECTAR</button>
@@ -154,6 +156,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
-  <script src="app.js?v=20260924a"></script>
+  <script src="app.js?v=20260924b"></script>
 </body>
 </html>

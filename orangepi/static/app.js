@@ -483,9 +483,65 @@
     wifiStatusEl.innerHTML = escapeHtml(msg);
   }
 
+  // --- IP del rover en la barra superior (24-sept) ------------------------
+  // En la red de la casa la IP la da el router y cambia -> se lee de la Pi
+  // cada 10s. En la red propia es siempre 10.42.0.1. Se recuerda la ultima
+  // IP de cada red en el celular (localStorage), para tenerla a mano al
+  // volver a esa red. localStorage puede fallar (modo privado): no es grave.
+  const roverIpEl = document.getElementById("rover-ip");
+  const wifiKnownEl = document.getElementById("wifi-known");
+
+  function loadKnownIps() {
+    try { return JSON.parse(localStorage.getItem("percy-ips") || "{}"); } catch (e) { return {}; }
+  }
+
+  function saveKnownIp(ssid, ip) {
+    try {
+      const known = loadKnownIps();
+      if (known[ssid] === ip) return;
+      known[ssid] = ip;
+      localStorage.setItem("percy-ips", JSON.stringify(known));
+    } catch (e) {
+      // sin almacenamiento en este navegador
+    }
+  }
+
+  function renderKnownIps() {
+    const rows = Object.entries(loadKnownIps()).map(([ssid, ip]) =>
+      `${escapeHtml(ssid)} &rarr; <b>${escapeHtml(ip)}</b>`);
+    rows.push(`RED PROPIA &rarr; <b>${AP_IP}</b> (fija)`);
+    wifiKnownEl.innerHTML = `ÚLTIMA IP POR RED:<br>${rows.join("<br>")}`;
+  }
+
+  function applyRoverIp(s) {
+    if (s && s.mode === "ap") {
+      roverIpEl.textContent = AP_IP;
+      roverIpEl.className = "ap";
+    } else if (s && s.mode === "client" && s.ip) {
+      roverIpEl.textContent = s.ip;
+      roverIpEl.className = "";
+      saveKnownIp(s.ssid, s.ip);
+    } else {
+      roverIpEl.textContent = location.hostname || "--";
+      roverIpEl.className = "";
+    }
+  }
+
+  async function pollRoverIp() {
+    try {
+      applyRoverIp(await wifiGet("/wifi/status"));
+    } catch (e) {
+      // sin conexion momentanea - se reintenta solo
+    }
+  }
+  pollRoverIp();
+  setInterval(pollRoverIp, 10000);
+
   async function refreshWifiStatus() {
     try {
       const s = await wifiGet("/wifi/status");
+      applyRoverIp(s);
+      renderKnownIps();
       if (s && s.ok === false) { wifiNotice(s.msg); return; }
       wifiStatusEl.className = s.mode;
       if (s.mode === "client") {
