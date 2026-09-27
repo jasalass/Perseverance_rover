@@ -1,8 +1,10 @@
 """
-Control de traccion diferencial: 6 motores N20 (3 izq + 3 der), 3x
-TB6612FNG, 1 motor por canal.
+Control de traccion diferencial: 6 motores N20 (3 izq + 3 der) en 2x
+TB6612FNG, con motores en paralelo por lado (ver README.md, "Cableado de
+motores N20"). El codigo maneja 3 juegos de lineas del diseño original de
+3 placas; el que no se usa queda sin conectar.
 
-Rediseño 18-sept: cada placa tiene su PROPIO par IN1/IN2 (libgpiod, 3
+Diseño 18-sept: cada placa tiene su PROPIO par IN1/IN2 (libgpiod, 3
 lineas espejadas por señal en vez de empalmar 1 cable en 3) y su PROPIO
 canal PWM - pero el PWM ya no es el de hardware de la Pi (solo 2 reales
 en todo el header), se movio a 6 canales libres del PCA9685 (ver

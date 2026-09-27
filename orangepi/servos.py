@@ -214,13 +214,13 @@ class ServoController:
         no el valor crudo del joystick/boton - movimiento suave, sin salto
         brusco.
 
-        Hombro, codo Y la inclinacion de garra (ex-muneca) NO se mueven
+        Hombro, codo Y la inclinacion de garra (muneca) NO se mueven
         desde aca (18-sept): las 3 pasaron a control por cinematica
         inversa acoplada por defecto (ver kinematics.solve3() +
         main.py:_arm_easing_loop) - mover la inclinacion sola sin
         recalcular hombro/codo haria que la punta de la garra se corra de
-        lugar en vez de solo rotar en el sitio (el brazo 2+3 fusionado ya
-        no tiene un eje de giro propio como antes, es un eslabon mas).
+        lugar en vez de solo rotar en el sitio (la inclinacion es un
+        eslabon mas en el mismo plano que hombro y codo).
         Para el modo libre/directo (switch IK/LIBRE del dashboard) ver
         move_arm_joint_direct() mas abajo."""
         if base_dir:

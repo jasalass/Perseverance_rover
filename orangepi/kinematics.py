@@ -123,7 +123,7 @@ def infer_elbow_up(elbow_servo: float) -> bool:
 @dataclass
 class IKResult3:
     """Como IKResult, pero para el brazo de 3 juntas (hombro+codo+
-    inclinacion de garra) desde el rediseño 18-sept - ver solve3()."""
+    inclinacion de garra) - ver solve3()."""
     shoulder_angle: float
     elbow_angle: float
     tilt_angle: float
@@ -144,8 +144,7 @@ class IKResult3:
 
 def solve3(x_mm: float, y_mm: float, phi_deg: float, elbow_up: bool = True) -> IKResult3:
     """Brazo de 3 juntas en el mismo plano (hombro, codo, inclinacion de
-    garra - rediseño 18-sept, la ex-muneca ya no gira sobre si misma, es
-    un eslabon mas). x_mm/y_mm: punto objetivo de la PUNTA de la garra
+    garra - la muneca es un eslabon mas en el mismo plano). x_mm/y_mm: punto objetivo de la PUNTA de la garra
     (misma convencion que solve()). phi_deg: angulo de acercamiento
     deseado, en grados y en la misma convencion matematica que
     theta1/theta2 (0 = horizontal hacia adelante) - no solo A DONDE llega

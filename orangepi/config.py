@@ -27,17 +27,17 @@ PCA9685_ADDRESS = 0x40
 # ---------------------------------------------------------------------------
 # Servos (PCA9685, 16 canales, se usan 10)
 # ---------------------------------------------------------------------------
-# Brazo de 5 servos (rediseño 18-sept: brazo 2+3 fusionados en una sola
-# pieza, la ex-muneca ya no gira sobre si misma - ahora INCLINA la garra
-# como un eslabon mas del brazo, en el mismo plano que hombro/codo. El
-# giro de garra sobre su propio eje (canal 4) se saco en ese rediseno y se
-# repuso el 21-sept: es un eje independiente (no entra en la IK, no cambia
-# la posicion de la punta), lo mueven botones aparte del dashboard.
+# Brazo de 5 servos + garra, piezas originales HowToMechatronics sin
+# rediseñar (el rediseño planeado el 18-sept - brazo 2+3 fusionados con un
+# MG996R en la muneca - no se hizo). La inclinacion de muneca (canal 3)
+# INCLINA la garra en el mismo plano que hombro/codo. El giro de garra
+# sobre su propio eje (canal 4) es un eje independiente (no entra en la
+# IK, no cambia la posicion de la punta), lo mueven botones aparte.
 # Ver kinematics.solve3() para la IK de las 3 juntas.
 CH_ARM_BASE = 0            # MG996R - girar brazo (base)
 CH_ARM_SHOULDER = 1        # MG996R - hombro (subir/bajar brazo)
 CH_ARM_ELBOW = 2           # MG996R - codo (extender/recoger alcance)
-CH_ARM_WRIST = 3           # MG996R (ex-muneca/MG90) - inclinacion de garra, ahora parte del plano del brazo
+CH_ARM_WRIST = 3           # SG90S engranajes metalicos (reemplazo del MG90) - inclinacion de garra
 CH_GRIPPER_ROTATE = 4      # MG90S - gira la garra sobre su propio eje (giro de muneca)
 CH_GRIPPER = 5             # MG90S - abre/cierra la garra
 
@@ -66,10 +66,8 @@ ANGLE_ARM_SHOULDER_MAX = 175  # tope real probado 180 (pose "traslado") - se dej
 ANGLE_ARM_ELBOW_REST = 90
 ANGLE_ARM_ELBOW_MIN = 10
 ANGLE_ARM_ELBOW_MAX = 175  # 21-sept: casi recto hacia abajo
-# Inclinacion de garra (ex-muneca, canal 3) - valores de la calibracion
-# vieja (MG90S, horn en otra posicion) YA NO APLICAN tras el rediseño
-# 18-sept (MG996R nuevo, pieza fusionada) - placeholders genericos hasta
-# recalibrar con el brazo impreso el lunes.
+# Inclinacion de garra (muneca, canal 3, SG90S metalico) - calibrada
+# 21-sept con el servo de reemplazo ya montado.
 ANGLE_ARM_TILT_MIN = 5    # 21-sept: fin de carrera del servo (cero en 30, ~25 grados bajo la alineacion)
 ANGLE_ARM_TILT_MAX = 135  # 21-sept: tope real medido en 136 (mas alla la garra toca el eslabon 2)
 # Giro de garra (canal 4) - valores de la calibracion del 16-sept, a
@@ -107,22 +105,18 @@ BASE_STEP_DEG_PER_TICK = 1.2  # giro de base mas lento que el resto (mas inercia
 SHOULDER_DOWN_STEP_SCALE = 0.12
 
 # ---------------------------------------------------------------------------
-# Cinematica inversa (kinematics.py) - brazo de 3 juntas acopladas desde el
-# rediseño 18-sept (hombro + codo + inclinacion de garra, ver
+# Cinematica inversa (kinematics.py) - brazo de 3 juntas acopladas
+# (hombro + codo + inclinacion de garra, ver
 # kinematics.solve3()). El joystick derecho mueve la POSICION (x,y) de la
 # punta de la garra; los botones que antes eran de la muneca ahora mueven
 # el ANGULO DE ACERCAMIENTO (phi) - las 3 juntas se recalculan juntas cada
 # vez para cumplir las dos cosas a la vez (ver main.py - _arm_easing_loop).
 # ---------------------------------------------------------------------------
 # Largo de los eslabones en mm, eje de giro a eje de giro (o a punta de
-# garra en el ultimo). hombro->codo sigue siendo el mismo brazo de antes
-# (medido 16-sept). codo->inclinacion e inclinacion->punta son NUEVOS
-# desde el rediseño (brazo 2+3 fusionados) - la pieza se imprime el
-# domingo, estos dos quedan en placeholder hasta medirla armada el lunes.
-IK_L1_MM = 120.0  # hombro -> codo (sin cambios, ya medido)
-# 21-sept: el brazo NO se rediseño al final (mismas piezas de siempre, solo
-# se sumo el servo de inclinacion) - codo->punta sigue midiendo 250 mm en
-# total (medido antes del rediseño). El reparto entre L2 y L3 es una
+# garra en el ultimo). hombro->codo medido 16-sept.
+IK_L1_MM = 120.0  # hombro -> codo (medido)
+# Piezas originales sin rediseñar - codo->punta mide 250 mm en total
+# (medido). El reparto entre L2 y L3 es una
 # ESTIMACION (Arm 02 mide ~115 mm) - confirmar midiendo eje de codo a eje
 # de inclinacion, o ajustando hasta que el joystick mueva la punta recto.
 IK_L2_MM = 115.0  # codo -> eje de inclinacion de garra
@@ -185,8 +179,11 @@ STEER_MAX_DELTA = 35  # grados +/- desde el centro, manejo normal
 PIVOT_STEER_DELTA = 52.5  # grados +/- desde el centro, modo tanque real
 
 # ---------------------------------------------------------------------------
-# Motores de traccion (3x TB6612FNG, 1 motor por canal, 2 motores por
-# placa - izq/der). Rediseño 18-sept: cada placa tiene su PROPIO par
+# Motores de traccion - armado final: 2x TB6612FNG, motores en paralelo
+# por lado (ver tabla en README.md, "Cableado de motores N20"). Las listas
+# de pines de abajo mantienen 3 entradas del diseño original de 3 placas;
+# la 3ra queda sin conectar y no afecta.
+# Diseño 18-sept: cada placa tiene su PROPIO par
 # IN1/IN2 (nada de empalmar 3 cables en 1 pin) - la Orange Pi tiene GPIO
 # de sobra, esto no es un bus que necesite compartirse. Confirmado libre
 # contra `gpio readall` corrido en la propia placa (no adivinado) el
@@ -200,7 +197,7 @@ PIVOT_STEER_DELTA = 52.5  # grados +/- desde el centro, modo tanque real
 # deja standby=0 completo. Cambio de arquitectura del 18-sept: TODAS las
 # senales de motor son ahora dedicadas por placa, cero empalmes de senal.
 # Unicas excepciones (junction real, no splice de cable pelado): VCC
-# logica de las 3 placas al pin 17 (3.3V, mA, igual que cualquier riel de
+# logica de las placas al pin 17 (3.3V, mA, igual que cualquier riel de
 # alimentacion) y STBY compartido al pin 16 (enable/disable, no es una
 # senal que necesite timing independiente por placa).
 #
@@ -208,7 +205,7 @@ PIVOT_STEER_DELTA = 52.5  # grados +/- desde el centro, modo tanque real
 # linea = gpio_global % 32. Listas en orden [placa1, placa2, placa3].
 PIN_MOTOR_VCC_LOGIC_HEADER = 17  # 3.3V - NO es el mismo pin que el VCC del PCA9685 (ese sigue en pin 1)
 
-# 24-sept: los motores quedaron cableados CRUZADOS en las 3 placas - el
+# 24-sept: los motores quedaron cableados CRUZADOS en las placas - el
 # canal A (AO1/AO2) va a los motores DERECHOS y el B (BO1/BO2) a los
 # IZQUIERDOS. Se corrige aqui en vez de recablear: el lado izquierdo usa los
 # pines del canal B y el derecho los del canal A.
@@ -218,10 +215,7 @@ PIN_MOTOR_VCC_LOGIC_HEADER = 17  # 3.3V - NO es el mismo pin que el VCC del PCA9
 # es GPIO126 = GPIO3_D6 (3,30). Si se cambia de placa, confirmar con
 # `gpio readall`.
 #
-# Placa 2, BIN2: la entrada de la TB6612 #2 esta DANADA (carga la linea,
-# medido 24-sept: 2.7V con el cable puesto, 3.2V sin el). Cable
-# desconectado; el motor de ese canal va en paralelo con el del mismo lado
-# en la placa 3 (BO1/BO2). La linea queda en el pin 40 (GPIO121) sin nada.
+# Placa 2, canal B: sin usar (BIN2 en el pin 40 queda sin conectar).
 
 # Lado izquierdo = canal B de cada placa
 PINS_LEFT_IN1 = [(4, 0), (3, 24), (3, 29)]   # BIN1 - fisico 13 / 35 / 36
@@ -233,7 +227,7 @@ PINS_RIGHT_IN1 = [(3, 22), (3, 30), (4, 5)]  # AIN1 - fisico 11 / 26 / 29
 PINS_RIGHT_IN2 = [(3, 23), (3, 28), (3, 31)] # AIN2 - fisico 12 / 31 / 33
 CH_MOTOR_PWM_R = [10, 11, 12]                # PWMA - PCA9685
 
-# Standby compartido por los 3 TB6612FNG (junction, ver nota arriba) -
+# Standby compartido por los TB6612FNG (junction, ver nota arriba) -
 # permite cortar motores por hardware ademas de por software (capa extra
 # del failsafe).
 PIN_MOTOR_STBY = (4, 3)  # fisico 16 - GPIO131 (GPIO4_A3)

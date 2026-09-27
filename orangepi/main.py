@@ -60,13 +60,13 @@ _failsafe_tripped = False
 _arm_target = {"base_dir": 0.0, "gripper_rotate_dir": 0.0}
 _arm_current = {k: 0.0 for k in _arm_target}
 
-# --- Control del brazo por cinematica inversa (rediseño 18-sept) ------------
+# --- Control del brazo por cinematica inversa --------------------------------
 # El joystick derecho mueve la POSICION (x,y) de la punta de la garra en
 # linea recta, y los botones que antes eran de la muneca mueven el ANGULO
 # DE ACERCAMIENTO (phi) - kinematics.solve3() calcula que angulo de
 # hombro/codo/inclinacion hace falta para cumplir las dos cosas a la vez
-# (brazo 2+3 fusionados, la inclinacion ya no gira sobre si misma, es un
-# eslabon mas - ver kinematics.py). Mismo patron velocidad+rampa que el
+# (la inclinacion de muneca es un eslabon mas en el mismo plano - ver
+# kinematics.py). Mismo patron velocidad+rampa que el
 # resto del brazo, integrando x/y/phi en vez de angulos de servo sueltos.
 _ik_target_vel = {"x_dir": 0.0, "y_dir": 0.0, "phi_dir": 0.0}  # -1..1 pedido
 _ik_current_vel = {k: 0.0 for k in _ik_target_vel}  # -1..1 ya rampeado

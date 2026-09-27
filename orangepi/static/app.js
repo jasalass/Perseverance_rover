@@ -10,7 +10,7 @@
 
   const state = {
     lx: 0, ly: 0,
-    base_dir: 0, gripper_rotate_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, // wrist_dir = angulo de acercamiento (phi) desde el rediseno 18-sept
+    base_dir: 0, gripper_rotate_dir: 0, arm_x_dir: 0, arm_y_dir: 0, wrist_dir: 0, // wrist_dir = angulo de acercamiento (phi)
     grip: 0, deposit: 0,
     preset_save: null, preset_goto: null, preset_delete: null,
     speed: 1,
